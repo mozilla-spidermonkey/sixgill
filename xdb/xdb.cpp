@@ -22,6 +22,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
+#define __STDC_FORMAT_MACROS
+#include <inttypes.h>
 
 // filesystem differences for OSX, which supports large files without
 // special handling or functions.
@@ -153,8 +155,8 @@ void Xdb::PrintStats()
   Assert(m_fd != -1 && !m_has_error);
 
   fprintf(logfile, "Xdb statistics:\n");
-  fprintf(logfile, "File size: %lu\n", (uint64_t) m_header.file_size);
-  fprintf(logfile, "Data streams: %lu\n", (uint64_t) m_header.data_stream_count);
+  fprintf(logfile, "File size: %" PRIu64 "\n", (uint64_t) m_header.file_size);
+  fprintf(logfile, "Data streams: %" PRIu64 "\n", (uint64_t) m_header.data_stream_count);
 
   if (m_key_cache_enabled) {
     uint64_t allocated = XDB_HEADER_MIN_SIZE;
@@ -167,9 +169,9 @@ void Xdb::PrintStats()
       used += layout.length;
     }
 
-    fprintf(logfile, "Bytes allocated: %lu (%.2f)\n", allocated,
+    fprintf(logfile, "Bytes allocated: %" PRIu64 " (%.2f)\n", allocated,
 	    allocated / (float)m_header.file_size);
-    fprintf(logfile, "Bytes used: %lu (%.2f)\n", used,
+    fprintf(logfile, "Bytes used: %" PRIu64 " (%.2f)\n", used,
 	    used / (float)m_header.file_size);
   }
 }
