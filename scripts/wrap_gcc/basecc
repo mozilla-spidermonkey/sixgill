@@ -24,6 +24,8 @@
 # environment specific settings #
 #################################
 
+use strict;
+
 use FindBin;
 use Cwd 'abs_path';
 
@@ -118,9 +120,27 @@ while (my $arg = shift) {
 	# just not the dependency output.
 	$have_E = 1  if $arg =~ /^-E/;
 	$have_M = 1  if $arg =~ /^-MM?$/;
-	$have_MD = 1 if $arg =~ /^-MM?D$/;
+	if ($arg =~ /^-MM?D$/) {
+	    $have_MD = 1;
+	    # Do not put -MD in $ppargs because it will overwrite the
+	    # dependency file with one that may contain the wrong
+	    # target .o file.
+	    next;
+	}
 
-        $ppargs .= " '$arg'";
+	if ($arg =~ /^-MP$/) {
+	    # Not generating dependencies when preprocessing
+	    next;
+	}
+
+	if ($arg =~ /^-MF$/) {
+	    # Not generating dependencies when preprocessing. Need to
+	    # discard following argument for the preprocessor (only).
+	    $args .= " '" . shift() . "'";
+	    next;
+	}
+
+	$ppargs .= " '$arg'";
     }
 }
 
@@ -143,7 +163,7 @@ if ($logfile ne "") {
 
 my $code;
 
-if (!$has_input || $passthrough) {
+if (!$has_input) {
     # just run the original argument, nothing for us to do here.
     $code = system("$gccdir/$ccname $args") / 256;
     exit($code);
