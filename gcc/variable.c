@@ -39,7 +39,8 @@ bool XIL_IsDestructor(tree decl)
   return false;
 }
 
-const char* XIL_GlobalName(tree decl)
+static const char*
+GlobalName(tree decl)
 {
   // if there is an annot_global then it has the global name.
   tree attr = DECL_ATTRIBUTES(decl);
@@ -101,6 +102,18 @@ const char* XIL_GlobalName(tree decl)
   }
 
   return name;
+}
+
+const char* XIL_GlobalName(tree decl)
+{
+    const char *name = GlobalName(decl);
+    if (!xil_prefix_with_mangled || !c_dialect_cxx() || DECL_EXTERN_C_P(decl))
+        return name;
+    const char *mangled = decl_as_string(DECL_ASSEMBLER_NAME(decl), TFF_DECL_SPECIFIERS);
+    char *new_name = xmalloc(strlen(mangled) + 1 + strlen(name) + 1);
+    sprintf(new_name, "%s|%s", mangled, name);
+    free(name);
+    return new_name;
 }
 
 const char* XIL_SourceName(tree decl)

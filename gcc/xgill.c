@@ -36,6 +36,7 @@ const char *xil_plugin_path = NULL;
 const char *xil_command = NULL;
 bool xil_has_annotation = false;
 tree xil_annotation_this = NULL;
+bool xil_prefix_with_mangled = false;
 
 const char *xil_annotation_single = NULL;
 
@@ -790,6 +791,12 @@ int plugin_init (struct plugin_name_args *plugin_info,
       else
         printf("WARNING: xgill argument 'annsingle' requires value\n");
       XIL_ForceAnnotationWrites();
+    }
+    else if (!strcmp(arg_key,"mangle")) {
+      if (arg_value)
+        xil_prefix_with_mangled = arg_value && arg_value[0] != '0';
+      else
+        printf("WARNING: xgill argument 'mangle' requires value\n");
     }
     else if (!strcmp(arg_key,"annot")) {
       if (arg_value) {
