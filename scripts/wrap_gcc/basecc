@@ -37,8 +37,11 @@ my @paths = grep { !/ccache/ && abs_path($_) ne abs_path($FindBin::Bin) } split(
 $ENV{PATH} = join(':', @paths);
 
 # directory containing the real versions of the gcc binaries.
-my ($gccdir) = grep { defined($_) && (abs_path($_) ne abs_path($FindBin::Bin)) && (-x "$_/gcc") }
-                    ($ENV{GCCDIR}, split(/:/, $ENV{PATH}), "/usr/local/bin");
+my $gccdir = $ENV{GCCDIR};
+if (!$gccdir) {
+    ($gccdir) = grep { defined($_) && (abs_path($_) ne abs_path($FindBin::Bin)) && (-x "$_/gcc") }
+                     ($ENV{GCCDIR}, split(/:/, $ENV{PATH}), "/usr/local/bin");
+}
 die "Cannot find real gcc binaries" if ! $gccdir;
 
 my ($xsource) = grep { (-x "$_/xsource") } (split(/:/, $ENV{PATH}), "$FindBin::Bin/../../bin");
