@@ -109,6 +109,8 @@ const char* XIL_GlobalName(tree decl)
     const char *name = GlobalName(decl);
     if (!xil_prefix_with_mangled || !c_dialect_cxx() || DECL_EXTERN_C_P(decl))
         return name;
+    if (strstr(name, "<error>"))
+        return name;
     const char *mangled = decl_as_string(DECL_ASSEMBLER_NAME(decl), TFF_DECL_SPECIFIERS);
     char *new_name = xmalloc(strlen(mangled) + 1 + strlen(name) + 1);
     sprintf(new_name, "%s|%s", mangled, name);

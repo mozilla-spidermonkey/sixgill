@@ -766,6 +766,10 @@ XIL_Type generate_TranslateType(tree type)
     TREE_BOGUS();
     return XIL_TypeError();
 
+  case TEMPLATE_TYPE_PARM:
+    TREE_BOGUS();
+    return XIL_TypeError();
+
   default:
     TREE_UNEXPECTED(type);
     return XIL_TypeError();
