@@ -19,7 +19,6 @@ case "$host_os" in
     ;;
 esac
 
-AC_SUBST(HOST_CFLAGS)
 AC_SUBST(HOST_LDFLAGS)
 
 dnl *** check for gmp/zlib ***
@@ -33,6 +32,26 @@ AC_ARG_ENABLE([debug],
                 [Build debugging binaries])],
               [DEBUG=1])
 AC_SUBST(DEBUG)
+
+dnl *** memory tracking
+
+# use the custom allocator for counting allocations for release builds.
+# for debug builds we want valgrind to work without getting confused.
+# this was disabled as it did not work in all configurations. need fix?
+
+AC_ARG_ENABLE([track-memory],
+              [AS_HELP_STRING([--enable-track-memory],
+                [Track memory allocations])])
+AS_IF([test "x$enable_track_memory" = "xyes" ],
+AC_DEFINE([USE_COUNT_ALLOCATOR], 1, [Track all memory allocations])
+HOST_CFLAGS="$HOST_CFLAGS -DUSE_COUNT_ALLOCATOR"
+
+dnl TRACK_BUFFER_MEMORY causes crashes within the gcc plugin
+dnl AC_DEFINE([TRACK_BUFFER_MEMORY], 1, [Track buffer allocations])
+dnl HOST_CFLAGS="$HOST_CFLAGS -DTRACK_BUFFER_MEMORY"
+)
+
+AC_SUBST(HOST_CFLAGS)
 
 dnl ***********************
 dnl CVC3 support

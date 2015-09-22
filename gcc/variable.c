@@ -112,7 +112,6 @@ const char* XIL_GlobalName(tree decl)
     const char *mangled = decl_as_string(DECL_ASSEMBLER_NAME(decl), TFF_DECL_SPECIFIERS);
     char *new_name = xmalloc(strlen(mangled) + 1 + strlen(name) + 1);
     sprintf(new_name, "%s|%s", mangled, name);
-    free(name);
     return new_name;
 }
 

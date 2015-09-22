@@ -24,13 +24,6 @@
 
 #include "stream.h"
 
-// use the custom allocator for counting allocations for release builds.
-// for debug builds we want valgrind to work without getting confused.
-// this is currently disabled as it does not work in all configurations. fix?
-//#ifndef DEBUG
-//#define USE_COUNT_ALLOCATOR
-//#endif
-
 // total number of heap-allocated bytes. this is a delta from the
 // last time ResetAllocs() was called, so it could be negative
 // (which will be printed as a very large number).
@@ -176,6 +169,8 @@ inline void track_delete(TrackAlloc &alloc, T *val) {
       free(pbase);                                      \
     }                                                   \
   }
+
+#define USING_COUNT_ALLOCATOR
 
 #else // USE_COUNT_ALLOCATOR
 

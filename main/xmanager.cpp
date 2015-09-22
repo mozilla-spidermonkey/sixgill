@@ -54,6 +54,8 @@ bool handling_transaction = false;
 // file descriptor for the socket the server is listening on.
 int server_socket = 0;
 
+extern void ClearConnections();
+
 // handler if we get a SIGTERM/SIGINT. make sure to clean up properly from
 // these and treat as normal termination.
 static void termination_handler(int signal)
@@ -71,6 +73,7 @@ static void termination_handler(int signal)
   terminating = true;
 
   logout << "Termination signal received, finishing..." << endl << flush;
+  ClearConnections();
   close(server_socket);
 
   ClearBlockCaches();
@@ -114,6 +117,14 @@ struct ConnectData {
 
 // all active connections
 Vector<ConnectData*> connections;
+
+void ClearConnections()
+{
+  for (size_t i = 0; i < connections.Size(); i++)
+      delete connections[i];
+  connections.Clear();
+}
+
 
 void handle_event(int fd, short, void *v)
 {

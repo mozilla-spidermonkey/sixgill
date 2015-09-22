@@ -215,8 +215,10 @@ LIB_OBJS = \
 	${XDB_OBJS}
 
 XDB_LIB_OBJS = \
+	util/alloc.o \
 	util/buffer.o \
 	util/json.o \
+	util/stream.o \
 	${XDB_OBJS} \
 	xdb/library.o
 

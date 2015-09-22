@@ -209,7 +209,9 @@ struct Buffer
   // get the v with which id was associated, return false if none.
   bool TestSeenRev(uint32_t id, SeenKey *pv);
 
+#ifdef TRACK_BUFFER_MEMORY
   ALLOC_OVERRIDE(g_alloc_Buffer);
+#endif
 };
 
 // buffer streams
