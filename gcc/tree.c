@@ -2245,6 +2245,33 @@ void XIL_TranslateExpression(struct XIL_TreeEnv *env, tree node)
     return;
   }
 
+  case ALIGNOF_EXPR:
+  {
+    tree operand = TREE_OPERAND(node, 0);
+
+    tree type = TREE_TYPE(operand);
+    XIL_Exp value = XIL_ExpInt(TYPE_ALIGN_UNIT(type));
+    XIL_ProcessResult(env, value);
+
+    return;
+  }
+
+  case SIZEOF_EXPR:
+  {
+    tree operand = TREE_OPERAND(node, 0);
+
+    if (XIL_TreeResultUsed(env)) {
+      XIL_Exp result = NULL;
+      tree size = TYPE_SIZE_UNIT(TREE_TYPE(operand));
+      MAKE_ENV(operand_env, env->point, NULL);
+      operand_env.result_rval = &result;
+      XIL_TranslateTree(&operand_env, size);
+      XIL_ProcessResult(env, result);
+    }
+
+    return;
+  }
+
   case EMPTY_CLASS_EXPR: {
     tree type = TREE_TYPE(node);
     XIL_Type xil_type = XIL_TranslateType(type);
