@@ -196,9 +196,9 @@ if ($code == 0) {
 }
 else {
     # retry without the plugin arguments.
-    $code = system("$gccdir/$ccname $args") / 256;
+    my $no_plugin_code = system("$gccdir/$ccname $args") / 256;
 
-    if ($code == 0) {
+    if ($no_plugin_code == 0) {
         # worked with the plugin disabled, plugin bug.
         if ($logfile ne "") {
             open(OUT,">> $logfile");
