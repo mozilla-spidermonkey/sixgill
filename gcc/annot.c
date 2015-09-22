@@ -1179,8 +1179,9 @@ void XIL_PrintStruct(FILE *file, const char *csu_name, tree type)
         }
       }
 
-      const char *full_name = XIL_GlobalName(field);
-      fprintf(file, "__attribute__((annot_global(\"%s\"))) static\n", full_name);
+      struct XIL_CString full_name = XIL_GlobalName(field);
+      fprintf(file, "__attribute__((annot_global(\"%s\"))) static\n", full_name.str);
+      XIL_ReleaseCString(&full_name);
       XIL_PrintDeclaration(file, TREE_TYPE(field), name);
       fprintf(file, ";\n");
     }
@@ -1255,9 +1256,10 @@ void XIL_PrintStruct(FILE *file, const char *csu_name, tree type)
           continue;
         }
 
-        const char *full_name = XIL_GlobalName(method);
+        struct XIL_CString full_name = XIL_GlobalName(method);
         fprintf(file, "__attribute__((annot_global(\"%s\")))\n",
-                full_name);
+                full_name.str);
+        XIL_ReleaseCString(&full_name);
 
         if (DECL_STATIC_FUNCTION_P(method))
           fprintf(file, "static ");
@@ -1414,7 +1416,7 @@ void XIL_PrintParameter(FILE *file, tree decl, int index)
 void XIL_PrintAnnotationHeader(FILE *file)
 {
   const char *name = NULL;
-  const char *full_name = NULL;
+  struct XIL_CString full_name = { NULL, false };
 
   if (state->decl) {
     name = XIL_SourceName(state->decl);
@@ -1422,14 +1424,16 @@ void XIL_PrintAnnotationHeader(FILE *file)
   }
   else {
     gcc_assert(state->type);
-    name = full_name = XIL_CSUName(state->type, NULL);
+    name = full_name.str = XIL_CSUName(state->type, NULL);
     gcc_assert(name);
   }
 
   fprintf(file, "__attribute__((annot_name(\"%s\")))\n", state->name);
-  fprintf(file, "__attribute__((annot_global(\"%s\")))\n", full_name);
+  fprintf(file, "__attribute__((annot_global(\"%s\")))\n", full_name.str);
   fprintf(file, "__attribute__((annot_source(\"%s\")))\n", name);
   fprintf(file, "void __annotation()");
+
+  XIL_ReleaseCString(&full_name);
 }
 
 // print 'namespace NAME {' wrappers for each namespace enclosing decl.
@@ -1616,9 +1620,10 @@ void WriteAnnotationFile(FILE *file)
       }
     }
 
-    const char *full_name = XIL_GlobalName(var->decl);
+    struct XIL_CString full_name = XIL_GlobalName(var->decl);
     fprintf(file, "__attribute__((annot_global(\"%s\"))) extern\n",
-            full_name);
+            full_name.str);
+    XIL_ReleaseCString(&full_name);
 
     XIL_PrintDeclaration(file, type, name);
     fprintf(file, ";\n");
@@ -1679,8 +1684,9 @@ void WriteAnnotationFile(FILE *file)
     // add the global variable itself to the annotation.
     tree type = TREE_TYPE(state->decl);
     const char *name = XIL_SourceName(state->decl);
-    const char *full_name = XIL_GlobalName(state->decl);
-    fprintf(file, "__attribute__((annot_global(\"%s\"))) extern\n", full_name);
+    struct XIL_CString full_name = XIL_GlobalName(state->decl);
+    fprintf(file, "__attribute__((annot_global(\"%s\"))) extern\n", full_name.str);
+    XIL_ReleaseCString(&full_name);
     XIL_PrintDeclaration(file, type, name);
     fprintf(file, ";\n");
   }

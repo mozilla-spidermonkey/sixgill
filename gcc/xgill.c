@@ -53,6 +53,38 @@ struct XIL_BlockEnv xil_active_env;
 
 struct XIL_ParamDecl *xil_pending_param_decls = NULL;
 
+void XIL_ReleaseCString(struct XIL_CString *xstr)
+{
+  if (xstr->owned)
+    free((char*) xstr->str);
+  xstr->str = NULL;
+  xstr->owned = false;
+}
+
+void XIL_AssignCString(struct XIL_CString *dst, struct XIL_CString *src)
+{
+  if (dst->str == src->str) {
+    gcc_assert(!(dst->owned && src->owned));
+    return;
+  }
+
+  XIL_ReleaseCString(dst);
+  dst->str = src->str;
+  dst->owned = src->owned;
+  src->owned = false;
+}
+
+void XIL_SetCString(struct XIL_CString *xstr, const char *str, int owned)
+{
+  if (xstr->str == str) {
+    gcc_assert(!xstr->owned);
+    return;
+  }
+  XIL_ReleaseCString(xstr);
+  xstr->str = str;
+  xstr->owned = owned;
+}
+
 void XIL_DebugPrint(tree node)
 {
   fflush(stdout);
@@ -190,17 +222,19 @@ void XIL_GenerateBlock(tree decl)
 
     // get the name of the function/global/type being annotated; this looks at
     // any annot_global / annot_source attributes on the decl.
-    const char *full_name = XIL_GlobalName(decl);
+    struct XIL_CString full_name = XIL_GlobalName(decl);
     const char *name = XIL_SourceName(decl);
 
     if (!strcmp(annotation_class, "func"))
-      xil_var = XIL_VarFunc(full_name, name);
+      xil_var = XIL_VarFunc(full_name.str, name);
     else if (!strcmp(annotation_class, "init"))
-      xil_var = XIL_VarGlob(full_name, name);
+      xil_var = XIL_VarGlob(full_name.str, name);
     else if (!strcmp(annotation_class, "comp")) {
-      xil_var = XIL_VarGlob(full_name, name);
+      xil_var = XIL_VarGlob(full_name.str, name);
       annot_type = 1;
     }
+
+    XIL_ReleaseCString(&full_name);
 
     gcc_assert(xil_var);
   }

@@ -185,20 +185,23 @@ bool XIL_IsSelfTypeDecl(tree decl)
   return false;
 }
 
-const char* XIL_QualifiedName(tree decl)
+struct XIL_CString XIL_QualifiedName(tree decl)
 {
+  struct XIL_CString name = { NULL, false };
+
   if (TREE_CODE(decl) != TYPE_DECL && TREE_CODE(decl) != NAMESPACE_DECL) {
     TREE_UNEXPECTED(decl);
-    return "<unknown>";
+    name.str = "<unknown>";
+    return name;
   }
 
-  const char *name = IDENTIFIER_POINTER(DECL_NAME(decl));
+  name.str = IDENTIFIER_POINTER(DECL_NAME(decl));
 
   tree context = DECL_CONTEXT(decl);
   if (!context || TREE_CODE(context) == TRANSLATION_UNIT_DECL)
     return name;
 
-  const char *context_name = NULL;
+  struct XIL_CString context_name = { NULL, false };
   if (TREE_CODE(context) == RECORD_TYPE ||
       TREE_CODE(context) == UNION_TYPE) {
     // structure nested in another structure declaration. use the outer
@@ -228,9 +231,11 @@ const char* XIL_QualifiedName(tree decl)
   }
 
   // append name to the qualified name of its context.
-  char *new_name = (char*) xmalloc(strlen(context_name) + strlen(name) + 3);
-  sprintf(new_name, "%s::%s", context_name, name);
-  return new_name;
+  char *new_name = (char*) xmalloc(strlen(context_name.str) + strlen(name.str) + 3);
+  sprintf(new_name, "%s::%s", context_name.str, name.str);
+  XIL_SetCString(&name, new_name, 1);
+  XIL_ReleaseCString(&context_name);
+  return name;
 }
 
 bool XIL_IsBaseField(tree field, bool *offset_zero)
@@ -316,8 +321,9 @@ const char* XIL_CSUName(tree type, const char *name)
   tree idnode = TYPE_NAME(type);
   if (c_dialect_cxx() && !*field_csu && idnode &&
       TREE_CODE(idnode) == TYPE_DECL && !XIL_IsAnonymousCxx(idnode)) {
-    const char *name = XIL_QualifiedName(idnode);
-    *field_csu = XIL_TypeCSU(name, NULL);
+    struct XIL_CString name = XIL_QualifiedName(idnode);
+    *field_csu = XIL_TypeCSU(name.str, NULL);
+    XIL_ReleaseCString(&name);
   }
 
   // watch for the fake structure introduced by GCC for pointer-to-member.
@@ -842,27 +848,31 @@ XIL_Field generate_TranslateField(tree decl)
   // get the name of this field.
 
   tree idnode = DECL_NAME(decl);
-  const char *name = NULL;
+  struct XIL_CString name = { NULL, false };
 
   if (idnode) {
-    name = IDENTIFIER_POINTER(idnode);
+    name.str = IDENTIFIER_POINTER(idnode);
   }
   else {
     // anonymous field. use the name 'field:index'.
     gcc_assert(!is_func);
-    name = (char*) xmalloc(50);
-    sprintf((char*)name, "field:%d", index);
+    name.str = (char*) xmalloc(50);
+    name.owned = true;
+    sprintf((char*)name.str, "field:%d", index);
   }
 
   tree type = TREE_TYPE(decl);
 
   // if the field's type is anonymous then use the name 'csu_name:field_name'.
   if (XIL_IsAnonymous(type)) {
-    char *anon_name = (char*) xmalloc(strlen(csu_name) + strlen(name) + 2);
-    sprintf(anon_name, "%s:%s", csu_name, name);
+    char *anon_name = (char*) xmalloc(strlen(csu_name) + strlen(name.str) + 2);
+    sprintf(anon_name, "%s:%s", csu_name, name.str);
     XIL_CSUName(type, anon_name);
+    free(anon_name);
   }
 
   XIL_Type xil_type = XIL_TranslateType(type);
-  return XIL_MakeField(name, name, csu_name, xil_type, is_func);
+  XIL_Field field = XIL_MakeField(name.str, name.str, csu_name, xil_type, is_func);
+  XIL_ReleaseCString(&name);
+  return field;
 }

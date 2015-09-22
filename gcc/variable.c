@@ -39,16 +39,17 @@ bool XIL_IsDestructor(tree decl)
   return false;
 }
 
-static const char*
+static struct XIL_CString
 GlobalName(tree decl)
 {
+  struct XIL_CString full_name = { NULL, false };
+
   // if there is an annot_global then it has the global name.
   tree attr = DECL_ATTRIBUTES(decl);
   while (attr) {
-    const char *full_name = NULL;
-    const char *purpose = XIL_DecodeAttribute(attr, &full_name, NULL);
+    const char *purpose = XIL_DecodeAttribute(attr, &full_name.str, NULL);
 
-    if (purpose && !strcmp(purpose, "annot_global") && full_name)
+    if (purpose && !strcmp(purpose, "annot_global") && full_name.str)
       return full_name;
     attr = TREE_CHAIN(attr);
   }
@@ -81,10 +82,12 @@ GlobalName(tree decl)
   // of the function variable. (static local variables).
   tree context = DECL_CONTEXT(decl);
   if (context && TREE_CODE(context) == FUNCTION_DECL) {
-    const char *func_name = XIL_GlobalName(context);
-    char *new_name = xmalloc(strlen(func_name) + strlen(name) + 2);
-    sprintf(new_name, "%s:%s", func_name, name);
-    return new_name;
+    struct XIL_CString func_name = XIL_GlobalName(context);
+    full_name.str = (char*) xmalloc(strlen(func_name.str) + strlen(name) + 2);
+    full_name.owned = true;
+    sprintf((char*) full_name.str, "%s:%s", func_name.str, name);
+    XIL_ReleaseCString(&func_name);
+    return full_name;
   }
 
   // the variable has the 'static' keyword if it is not TREE_PUBLIC.
@@ -96,25 +99,30 @@ GlobalName(tree decl)
     while (strchr(file, '/') != NULL)
       file = strchr(file, '/') + 1;
 
-    char *new_name = xmalloc(strlen(file) + strlen(name) + 2);
-    sprintf(new_name, "%s:%s", file, name);
-    return new_name;
+    full_name.str = (char*) xmalloc(strlen(file) + strlen(name) + 2);
+    full_name.owned = true;
+    sprintf((char*) full_name.str, "%s:%s", file, name);
+    return full_name;
   }
 
-  return name;
+  full_name.str = name;
+  return full_name;
 }
 
-const char* XIL_GlobalName(tree decl)
+struct XIL_CString XIL_GlobalName(tree decl)
 {
-    const char *name = GlobalName(decl);
-    if (!xil_prefix_with_mangled || !c_dialect_cxx() || DECL_EXTERN_C_P(decl))
-        return name;
-    if (strstr(name, "<error>"))
-        return name;
-    const char *mangled = decl_as_string(DECL_ASSEMBLER_NAME(decl), TFF_DECL_SPECIFIERS);
-    char *new_name = xmalloc(strlen(mangled) + 1 + strlen(name) + 1);
-    sprintf(new_name, "%s|%s", mangled, name);
-    return new_name;
+  struct XIL_CString name = GlobalName(decl);
+  if (!xil_prefix_with_mangled || !c_dialect_cxx() || DECL_EXTERN_C_P(decl))
+    return name;
+  if (strstr(name.str, "<error>"))
+    return name;
+  struct XIL_CString full_name = { NULL, false };
+  const char *mangled = decl_as_string(DECL_ASSEMBLER_NAME(decl), TFF_DECL_SPECIFIERS);
+  full_name.str = (char*) xmalloc(strlen(mangled) + 1 + strlen(name.str) + 1);
+  full_name.owned = true;
+  sprintf((char*) full_name.str, "%s|%s", mangled, name.str);
+  XIL_ReleaseCString(&name);
+  return full_name;
 }
 
 const char* XIL_SourceName(tree decl)
@@ -177,11 +185,14 @@ XIL_Var XIL_TranslateParam(tree param_decl, const char *name)
   }
 
   if (!name) {
-    name = xmalloc(10);
+    name = (char*) xmalloc(10);
     sprintf((char*)name, "__arg%d", param_index);
+    XIL_Var ret = XIL_VarArg(param_index, name, false);
+    free((char*) name);
+    return ret;
+  } else {
+    return XIL_VarArg(param_index, name, false);
   }
-
-  return XIL_VarArg(param_index, name, false);
 }
 
 XIL_Var generate_TranslateVar(tree decl)
@@ -189,7 +200,8 @@ XIL_Var generate_TranslateVar(tree decl)
   static XIL_Var error_var = NULL;
   if (!error_var) error_var = XIL_VarGlob("error", "error");
 
-  const char *name = XIL_SourceName(decl);
+  struct XIL_CString name = { NULL, false };
+  name.str = XIL_SourceName(decl);
   tree type = TREE_TYPE(decl);
 
   // store here for function-scope variables and we'll add its type
@@ -199,13 +211,13 @@ XIL_Var generate_TranslateVar(tree decl)
   switch (TREE_CODE(decl)) {
 
   case FUNCTION_DECL: {
-    const char *full_name = XIL_GlobalName(decl);
+    struct XIL_CString full_name = XIL_GlobalName(decl);
 
     // for functions, change out the name for __base_ctor/__comp_ctor and dtor.
     // fortunately these have the same full name and type as the variable we
     // will replace them with, so just fixup the source name.
-    if (!strncmp(name,"__base_ctor",11) || !strncmp(name,"__comp_ctor",11) ||
-        !strncmp(name,"__base_dtor",11) || !strncmp(name,"__comp_dtor",11)) {
+    if (!strncmp(name.str,"__base_ctor",11) || !strncmp(name.str,"__comp_ctor",11) ||
+        !strncmp(name.str,"__base_dtor",11) || !strncmp(name.str,"__comp_dtor",11)) {
       // these all share the same structure name (will add the '~' for dtor
       // below). get the name of the structure and strip off any namespace
       // or template info.
@@ -213,35 +225,42 @@ XIL_Var generate_TranslateVar(tree decl)
       TREE_CHECK(type, METHOD_TYPE);
       tree base_type = TYPE_METHOD_BASETYPE(type);
       XIL_Type xil_base_type = XIL_TranslateType(base_type);
-      const char *new_name = xstrdup(XIL_GetTypeCSUName(xil_base_type));
+      const char *new_name = XIL_GetTypeCSUName(xil_base_type);
 
       const char *pos = strchr(new_name,' ');
       if (pos) new_name = pos + 1;
-      while (strchr(new_name,':') != NULL)
-        new_name = strchr(new_name,':') + 1;
+
+      pos = strrchr(new_name, ':');
+      if (pos) new_name = pos + 1;
+
+      new_name = xstrdup(new_name);
       pos = strchr(new_name,'<');
       if (pos) *const_cast<char*>(pos) = 0;
-      name = new_name;
+
+      XIL_SetCString(&name, new_name, 1);
     }
 
     // the source name for destructors does not include the '~'. add it here.
     if (XIL_IsDestructor(decl)) {
-      char *new_name = xmalloc(strlen(name) + 2);
+      char *new_name = (char*) xmalloc(strlen(name.str) + 2);
       *new_name = '~';
-      strcpy(new_name + 1, name);
-      name = new_name;
+      strcpy(new_name + 1, name.str);
+      XIL_SetCString(&name, new_name, 1);
     }
 
-    return XIL_VarFunc(full_name, name);
+    XIL_Var ret = XIL_VarFunc(full_name.str, name.str);
+    XIL_ReleaseCString(&full_name);
+    XIL_ReleaseCString(&name);
+    return ret;
   }
 
   case PARM_DECL: {
-    xil_decl = XIL_TranslateParam(decl, name);
+    xil_decl = XIL_TranslateParam(decl, name.str);
     break;
   }
 
   case VAR_DECL: {
-    if (!name) {
+    if (!name.str) {
       // treat unnamed variables as temporaries. these are introduced by GCC
       // in some cases such as compound expressions ({ s1; s2; value; }).
       // TODO: should check later that these really are temporaries, e.g.
@@ -255,10 +274,11 @@ XIL_Var generate_TranslateVar(tree decl)
         // watch out for temporaries with anonymous types and try to assign
         // a name to them. use the index of the temporary.
         if (XIL_IsAnonymous(type)) {
-          char *anon_name = xmalloc(strlen(xil_active_env.decl_name) + 100);
+          char *anon_name = (char*) xmalloc(strlen(xil_active_env.decl_name) + 100);
           sprintf(anon_name, "%s:__temp_%d",
                   xil_active_env.decl_name, xil_active_env.temp_count + 1);
           XIL_CSUName(type, anon_name);
+          free(anon_name);
         }
 
         XIL_Type xil_type = XIL_TranslateType(type);
@@ -279,11 +299,11 @@ XIL_Var generate_TranslateVar(tree decl)
       const char *purpose = XIL_DecodeAttribute(attr, &text_value, &int_value);
 
       if (purpose && !strcmp(purpose, "annot_param"))
-        return XIL_VarArg(int_value, name, true);
+        return XIL_VarArg(int_value, name.str, true);
       if (purpose && !strcmp(purpose, "annot_return"))
         return XIL_VarReturn(true);
       if (purpose && !strcmp(purpose, "annot_local") && text_value)
-        return XIL_VarLocal(text_value, name, true);
+        return XIL_VarLocal(text_value, name.str, true);
 
       if (purpose && !strcmp(purpose, "annot_this_var")) {
         // should have already found and filtered these.
@@ -294,7 +314,7 @@ XIL_Var generate_TranslateVar(tree decl)
       attr = TREE_CHAIN(attr);
     }
 
-    const char *full_name = NULL;
+    struct XIL_CString full_name = { NULL, false };
 
     // figure out whether this is a local.
     bool is_global = false;
@@ -304,12 +324,12 @@ XIL_Var generate_TranslateVar(tree decl)
         TREE_CODE(context) != TRANSLATION_UNIT_DECL) {
       if (context == xil_active_env.decl) {
         // local variable.
-        full_name = name;
+        XIL_AssignCString(&full_name, &name);
       }
       else if (!xil_active_env.decl) {
         // not inside a block, we must be checking whether this is a global
         // variable we want to analyze. treat as a local.
-        full_name = name;
+        XIL_AssignCString(&full_name, &name);
       }
       else if (TREE_CODE(context) == NAMESPACE_DECL) {
         // usually things defined in a namespace do not have that namespace
@@ -328,29 +348,34 @@ XIL_Var generate_TranslateVar(tree decl)
       full_name = XIL_GlobalName(decl);
     }
 
-    gcc_assert(full_name);
+    gcc_assert(full_name.str);
 
     // if the variable's type is an anonymous structure, give the structure
     // a name based on the variable.
     if (XIL_IsAnonymous(type)) {
-      const char *anon_name = NULL;
+      struct XIL_CString anon_name = { NULL, false };
       if (is_global) {
-        anon_name = full_name;
+        XIL_SetCString(&anon_name, full_name.str, false); // full_name will live longer
       }
       else {
         // use 'function:name' since the structure's name must be
         // globally unique.
-        anon_name = xmalloc(strlen(xil_active_env.decl_name) +
-			    strlen(full_name) + 2);
-        sprintf((char*)anon_name, "%s:%s",
-                xil_active_env.decl_name, full_name);
+        anon_name.str = (char*) xmalloc(strlen(xil_active_env.decl_name) +
+                                        strlen(full_name.str) + 2);
+        anon_name.owned = true;
+        sprintf((char*) anon_name.str, "%s:%s",
+                xil_active_env.decl_name, full_name.str);
       }
 
-      XIL_CSUName(type, anon_name);
+      XIL_CSUName(type, anon_name.str);
+      XIL_ReleaseCString(&anon_name);
     }
 
     if (is_global) {
-      return XIL_VarGlob(full_name, name);
+      XIL_Var ret = XIL_VarGlob(full_name.str, name.str);
+      XIL_ReleaseCString(&full_name);
+      XIL_ReleaseCString(&name);
+      return ret;
     }
     else {
       // need to watch for different local variables in a function which share
@@ -363,19 +388,20 @@ XIL_Var generate_TranslateVar(tree decl)
 
         tree oidnode = DECL_NAME(local->decl);
         const char *oname = IDENTIFIER_POINTER(oidnode);
-        if (!strcmp(name, oname))
+        if (!strcmp(name.str, oname))
           index++;
 
         local = local->block_next;
       }
 
       if (index) {
-        char *new_name = xmalloc(strlen(name) + 10);
-        sprintf(new_name, "%s:%d", name, index);
-        xil_decl = XIL_VarLocal(new_name, name, false);
+        char *new_name = (char*) xmalloc(strlen(name.str) + 10);
+        sprintf(new_name, "%s:%d", name.str, index);
+        xil_decl = XIL_VarLocal(new_name, name.str, false);
+        free(new_name);
       }
       else {
-        xil_decl = XIL_VarLocal(name, name, false);
+        xil_decl = XIL_VarLocal(name.str, name.str, false);
       }
 
       local = (struct XIL_LocalData *) xmalloc(sizeof(struct XIL_LocalData));
@@ -394,8 +420,11 @@ XIL_Var generate_TranslateVar(tree decl)
 
   default:
     TREE_UNEXPECTED(decl);
+    XIL_ReleaseCString(&name);
     return error_var;
   }
+
+  XIL_ReleaseCString(&name);
 
   gcc_assert(xil_decl);
 

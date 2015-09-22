@@ -331,16 +331,32 @@ struct XIL_ParamDecl
 };
 extern struct XIL_ParamDecl *xil_pending_param_decls;
 
+// unique pointer to character string
+struct XIL_CString
+{
+    const char *str;
+    int owned;
+};
+
+// set a XUL_CString to a new value, releasing the old one if needed.
+void XIL_SetCString(struct XIL_CString *xstr, const char *str, int owned);
+
+// assign one string to another, transferring ownership if needed.
+void XIL_AssignCString(struct XIL_CString *dst, struct XIL_CString *src);
+
+// free up a string, if owned.
+void XIL_ReleaseCString(struct XIL_CString *xstr);
+
 // get the unique name to use for a global symbol. this may be a global
 // variable/function, static unit scope variable, or static function
 // scope variable.
-const char* XIL_GlobalName(tree decl);
+struct XIL_CString XIL_GlobalName(tree decl);
 
 // get the non-unique name from the source to use for a global/local symbol.
 const char* XIL_SourceName(tree decl);
 
 // get the fully qualified name of a type or namespace declaration.
-const char* XIL_QualifiedName(tree decl);
+struct XIL_CString XIL_QualifiedName(tree decl);
 
 // gets a new temporary variable of the specified type.
 XIL_Var XIL_NewTemporary(XIL_Type type);
