@@ -330,6 +330,6 @@ extern OutStream *log_stream;
 #define logout (*log_stream)
 
 // write to the logging stream without using an OutStream.
-#define logfile stdout
+#define logfile stderr
 
 // see BufferOutStream in buffer.h for a stream that appends to a char buffer.
