@@ -30,6 +30,13 @@
 
 #include "../imlang/interface.h"
 
+// gcc version compatibility
+
+#ifndef VEC
+# define VEC(T,U) vec<T,va_gc>
+# define VEC_iterate(T,V,I,P) (V)->iterate((I), &(P))
+#endif
+
 // suppress weird error with CUMULATIVE_ARGS not defined in target.h
 #ifndef CUMULATIVE_ARGS
 #define CUMULATIVE_ARGS int

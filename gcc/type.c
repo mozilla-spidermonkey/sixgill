@@ -421,7 +421,7 @@ struct XIL_VirtualFunction* XIL_GetFunctionFields(tree type)
   VEC(tree,gc) *methods = CLASSTYPE_METHOD_VEC(type);
   int method_ind = 2;
   tree node = NULL;
-  for (; VEC_iterate(tree,methods,method_ind,node); method_ind++) {
+  for (; methods && VEC_iterate(tree,methods,method_ind,node); method_ind++) {
     while (node) {
       // the node may or may not be an overload. these handle both cases.
       tree method = OVL_CURRENT(node);
@@ -610,7 +610,7 @@ XIL_Type XIL_TranslateRecordType(tree type)
     VEC(tree,gc) *methods = CLASSTYPE_METHOD_VEC(type);
     int method_ind = 2;
     tree node = NULL;
-    for (; VEC_iterate(tree,methods,method_ind,node); method_ind++) {
+    for (; methods && VEC_iterate(tree,methods,method_ind,node); method_ind++) {
       while (node) {
         // the node may or may not be an overload. these handle both cases.
         tree method = OVL_CURRENT(node);

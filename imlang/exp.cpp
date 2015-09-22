@@ -872,11 +872,11 @@ ExpInt* Exp::MakeIntMpz(const mpz_t value, size_t bits, bool sign)
 
   // for doing coercions, we need bitmasks to take the bitwise and with
   // and get the lower N bits of the input value. only support coercions
-  // for 8, 16, 32, and 64 bit quantities, and only construct the masks once.
-  static mpz_t mask8, mask16, mask32, mask64;
+  // for certain sized quantities, and only construct the masks once.
+  static mpz_t mask8, mask16, mask32, mask64, mask128;
 
   // bitwise complement of the above masks.
-  static mpz_t comp8, comp16, comp32, comp64;
+  static mpz_t comp8, comp16, comp32, comp64, comp128;
 
   static bool init_mask = false;
   if (!init_mask) {
@@ -894,6 +894,9 @@ ExpInt* Exp::MakeIntMpz(const mpz_t value, size_t bits, bool sign)
     mpz_init(mask64);
     for (size_t i = 0; i < 64; i++) mpz_setbit(mask64, i);
 
+    mpz_init(mask128);
+    for (size_t i = 0; i < 128; i++) mpz_setbit(mask128, i);
+
     mpz_init(comp8);
     mpz_com(comp8, mask8);
 
@@ -905,6 +908,9 @@ ExpInt* Exp::MakeIntMpz(const mpz_t value, size_t bits, bool sign)
 
     mpz_init(comp64);
     mpz_com(comp64, mask64);
+
+    mpz_init(comp128);
+    mpz_com(comp128, mask128);
   }
 
   if (bits) {
@@ -925,6 +931,10 @@ ExpInt* Exp::MakeIntMpz(const mpz_t value, size_t bits, bool sign)
     else if (bits == 64) {
       mpz_init_set(mask, mask64);
       mpz_init_set(comp, comp64);
+    }
+    else if (bits == 128) {
+      mpz_init_set(mask, mask128);
+      mpz_init_set(comp, comp128);
     }
     else Assert(false);
 
