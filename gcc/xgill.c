@@ -63,7 +63,7 @@ void XIL_DebugPrint(tree node)
 
 void XIL_ActivePushScope()
 {
-  struct XIL_ScopeEnv *scope = xmalloc(sizeof(struct XIL_ScopeEnv));
+  struct XIL_ScopeEnv *scope = (struct XIL_ScopeEnv *) xmalloc(sizeof(struct XIL_ScopeEnv));
   memset(scope, 0, sizeof(struct XIL_ScopeEnv));
 
   scope->parent = xil_active_scope;
@@ -233,10 +233,10 @@ void XIL_GenerateBlock(tree decl)
     return;
 
   // parse the annotation kind.
-  XIL_AnnotationKind use_kind = 0;
+  XIL_AnnotationKind use_kind = XIL_AnnotationKind(0);
   if (annotation_kind) {
 #define XIL_TEST_ANNOT(_, STR, VALUE)                           \
-    if (!strcmp(annotation_kind, STR)) use_kind = VALUE;
+    if (!strcmp(annotation_kind, STR)) use_kind = XIL_AnnotationKind(VALUE);
   XIL_ITERATE_ANNOT(XIL_TEST_ANNOT)
 #undef XIL_TEST_ANNOT
     gcc_assert(use_kind);
@@ -602,7 +602,7 @@ void gcc_plugin_finish_decl(void *gcc_data, void *user_data)
     struct XIL_ParamDecl *last = xil_pending_param_decls;
     while (last && last->next) last = last->next;
 
-    struct XIL_ParamDecl *param_decl = xcalloc(1, sizeof(struct XIL_ParamDecl));
+    struct XIL_ParamDecl *param_decl = (struct XIL_ParamDecl *) xcalloc(1, sizeof(struct XIL_ParamDecl));
     param_decl->decl = decl;
     if (last) last->next = param_decl;
     else xil_pending_param_decls = param_decl;

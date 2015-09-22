@@ -171,8 +171,8 @@ const char* XIL_TreeIntString(tree node)
     }
   }
 
-  int needed = mpz_sizeinbase(mpz, 10) + 2;
-  char *str = xmalloc(needed);
+  size_t needed = mpz_sizeinbase(mpz, 10) + 2;
+  char *str = (char*) xmalloc(needed);
 
   mpz_get_str(str, 10, mpz);
   gcc_assert(strlen(str) + 1 <= needed);
@@ -196,7 +196,7 @@ void XIL_TranslateConstant(struct XIL_TreeEnv *env, tree node)
 
 #define REAL_BUF_SIZE 200
 
-    char *buf = xmalloc(REAL_BUF_SIZE);
+    char *buf = (char*) xmalloc(REAL_BUF_SIZE);
     real_to_decimal(buf, value, REAL_BUF_SIZE, 0, 1);
 
 #undef REAL_BUF_SIZE
@@ -430,7 +430,7 @@ void XIL_TranslateComparison(struct XIL_TreeEnv *env, tree node)
     xil_stride_type = XIL_TranslateType(stride_type);
   }
 
-  XIL_BinopKind binop = 0;
+  XIL_BinopKind binop = (XIL_BinopKind) 0;
 
   switch (TREE_CODE(node)) {
   case LT_EXPR: case UNLT_EXPR:
@@ -560,7 +560,7 @@ void XIL_TranslateUnary(struct XIL_TreeEnv *env, tree node)
   XIL_TranslateTree(&right_env, right);
 
   // leave this as zero to treat as a nop.
-  XIL_UnopKind unop = 0;
+  XIL_UnopKind unop = (XIL_UnopKind) 0;
 
   switch (TREE_CODE(node)) {
 
@@ -665,7 +665,7 @@ void XIL_TranslateBinary(struct XIL_TreeEnv *env, tree node)
   }
 
   // if we can use a binop directly then do that.
-  XIL_BinopKind binop = 0;
+  XIL_BinopKind binop = (XIL_BinopKind) 0;
 
   switch (TREE_CODE(node)) {
 
@@ -950,7 +950,7 @@ void XIL_TranslateStatement(struct XIL_TreeEnv *env, tree node)
     struct XIL_LabelData **pdata =
       (struct XIL_LabelData**) XIL_Associate(XIL_AscBlock, "Label", label_decl);
     if (!*pdata)
-      *pdata = xcalloc(1, sizeof(struct XIL_LabelData));
+      *pdata = (struct XIL_LabelData*) xcalloc(1, sizeof(struct XIL_LabelData));
     struct XIL_LabelData *label_data = *pdata;
 
     // remember the point we were at when seeing this label. we need to
@@ -982,7 +982,7 @@ void XIL_TranslateStatement(struct XIL_TreeEnv *env, tree node)
     struct XIL_LabelData **pdata =
       (struct XIL_LabelData**) XIL_Associate(XIL_AscBlock, "Label", label_decl);
     if (!*pdata)
-      *pdata = xcalloc(1, sizeof(struct XIL_LabelData));
+      *pdata = (struct XIL_LabelData*) xcalloc(1, sizeof(struct XIL_LabelData));
     struct XIL_LabelData *label_data = *pdata;
 
     if (label_data->point) {
@@ -993,7 +993,7 @@ void XIL_TranslateStatement(struct XIL_TreeEnv *env, tree node)
     else {
       // don't know the point or scope of the target, wait until
       // we see the label.
-      struct XIL_GotoData *goto_data = xcalloc(1, sizeof(struct XIL_GotoData));
+      struct XIL_GotoData *goto_data = (struct XIL_GotoData*) xcalloc(1, sizeof(struct XIL_GotoData));
       goto_data->point = *env->point;
       goto_data->scope = xil_active_scope;
       goto_data->next = label_data->gotos;
@@ -1451,8 +1451,8 @@ static XIL_Field XIL_GetVTableField(tree type, tree node)
       TREE_UNEXPECTED(node);
       return error_field;
     }
-    vtable_index = TREE_UINT(offset) / xil_pointer_width;
-    if (vtable_index * xil_pointer_width != TREE_UINT(offset)) {
+    vtable_index = int(TREE_UINT(offset) / xil_pointer_width);
+    if (size_t(vtable_index) * xil_pointer_width != TREE_UINT(offset)) {
       TREE_UNEXPECTED(node);
       return error_field;
     }
@@ -1806,7 +1806,7 @@ void XIL_TranslateExpression(struct XIL_TreeEnv *env, tree node)
     right_env.result_rval = &xil_right;
     XIL_TranslateTree(&right_env, right);
 
-    XIL_BinopKind binop = 0;
+    XIL_BinopKind binop = (XIL_BinopKind) 0;
     switch (TREE_CODE(node)) {
     case TRUTH_AND_EXPR: binop = XIL_B_LogicalAnd; break;
     case TRUTH_OR_EXPR: binop = XIL_B_LogicalOr; break;
@@ -1885,7 +1885,7 @@ void XIL_TranslateExpression(struct XIL_TreeEnv *env, tree node)
       *env->point = temp_point;
     }
 
-    XIL_BinopKind binop = 0;
+    XIL_BinopKind binop = (XIL_BinopKind) 0;
     if (is_increment)
       binop = xil_stride_type ? XIL_B_PlusPI : XIL_B_Plus;
     else
@@ -2092,7 +2092,7 @@ void XIL_TranslateExpression(struct XIL_TreeEnv *env, tree node)
     }
 
     int ind = 0, arg_count = TREE_OPERAND_LENGTH(node) - arg_start;
-    XIL_Exp *args = xmalloc(sizeof(XIL_Exp) * arg_count);
+    XIL_Exp *args = (XIL_Exp*) xmalloc(sizeof(XIL_Exp) * arg_count);
 
     for (; ind < arg_count; ind++) {
       tree arg = TREE_OPERAND(node, ind + arg_start);

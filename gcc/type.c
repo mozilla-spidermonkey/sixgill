@@ -228,7 +228,7 @@ const char* XIL_QualifiedName(tree decl)
   }
 
   // append name to the qualified name of its context.
-  char *new_name = xmalloc(strlen(context_name) + strlen(name) + 3);
+  char *new_name = (char*) xmalloc(strlen(context_name) + strlen(name) + 3);
   sprintf(new_name, "%s::%s", context_name, name);
   return new_name;
 }
@@ -374,7 +374,7 @@ struct XIL_VirtualFunction* XIL_GetFunctionFields(tree type)
         XIL_GetFunctionFields(TREE_TYPE(decl));
 
       for (; bvirt; bvirt = bvirt->next) {
-        virt = xcalloc(1, sizeof(struct XIL_VirtualFunction));
+        virt = (struct XIL_VirtualFunction *) xcalloc(1, sizeof(struct XIL_VirtualFunction));
         virt->next = *pvirt;
         *pvirt = virt;
 
@@ -448,7 +448,7 @@ struct XIL_VirtualFunction* XIL_GetFunctionFields(tree type)
       }
 
       // make an entry for this function.
-      virt = xcalloc(1, sizeof(struct XIL_VirtualFunction));
+      virt = (struct XIL_VirtualFunction*) xcalloc(1, sizeof(struct XIL_VirtualFunction));
       virt->next = *pvirt;
       *pvirt = virt;
 
@@ -485,7 +485,7 @@ void XIL_AddDataFields(tree type)
     // we are done with the block.
     tree attr = DECL_ATTRIBUTES(decl);
     while (attr) {
-      struct XIL_PendingAnnotation *pending = xcalloc(1, sizeof(struct XIL_PendingAnnotation));
+      struct XIL_PendingAnnotation *pending = (struct XIL_PendingAnnotation*) xcalloc(1, sizeof(struct XIL_PendingAnnotation));
       pending->type = type;
       pending->attr = attr;
       pending->next = xil_active_env.annots;
@@ -707,7 +707,7 @@ XIL_Type XIL_TranslateFunctionType(tree type)
 
     if (arg_count == arg_capacity) {
       arg_capacity += 4;
-      arg_array = xrealloc(arg_array, sizeof(XIL_Type) * arg_capacity);
+      arg_array = (XIL_Type *) xrealloc(arg_array, sizeof(XIL_Type) * arg_capacity);
     }
 
     XIL_Type xil_arg_type = XIL_TranslateType(arg_type);
@@ -830,7 +830,7 @@ XIL_Field generate_TranslateField(tree decl)
   else {
     // anonymous field. use the name 'field:index'.
     gcc_assert(!is_func);
-    name = xmalloc(50);
+    name = (char*) xmalloc(50);
     sprintf((char*)name, "field:%d", index);
   }
 
@@ -838,7 +838,7 @@ XIL_Field generate_TranslateField(tree decl)
 
   // if the field's type is anonymous then use the name 'csu_name:field_name'.
   if (XIL_IsAnonymous(type)) {
-    char *anon_name = xmalloc(strlen(csu_name) + strlen(name) + 2);
+    char *anon_name = (char*) xmalloc(strlen(csu_name) + strlen(name) + 2);
     sprintf(anon_name, "%s:%s", csu_name, name);
     XIL_CSUName(type, anon_name);
   }

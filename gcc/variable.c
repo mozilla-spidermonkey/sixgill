@@ -212,14 +212,14 @@ XIL_Var generate_TranslateVar(tree decl)
       TREE_CHECK(type, METHOD_TYPE);
       tree base_type = TYPE_METHOD_BASETYPE(type);
       XIL_Type xil_base_type = XIL_TranslateType(base_type);
-      char *new_name = xstrdup(XIL_GetTypeCSUName(xil_base_type));
+      const char *new_name = xstrdup(XIL_GetTypeCSUName(xil_base_type));
 
-      char *pos = strchr(new_name,' ');
+      const char *pos = strchr(new_name,' ');
       if (pos) new_name = pos + 1;
       while (strchr(new_name,':') != NULL)
         new_name = strchr(new_name,':') + 1;
       pos = strchr(new_name,'<');
-      if (pos) *pos = 0;
+      if (pos) *const_cast<char*>(pos) = 0;
       name = new_name;
     }
 
@@ -377,7 +377,7 @@ XIL_Var generate_TranslateVar(tree decl)
         xil_decl = XIL_VarLocal(name, name, false);
       }
 
-      local = xmalloc(sizeof(struct XIL_LocalData));
+      local = (struct XIL_LocalData *) xmalloc(sizeof(struct XIL_LocalData));
       memset(local, 0, sizeof(struct XIL_LocalData));
       local->decl = decl;
       local->var = xil_decl;
