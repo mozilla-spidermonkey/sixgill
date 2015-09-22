@@ -117,6 +117,19 @@ struct KeyAnnotationInfo
   Vector<BlockCFG*> write_cfgs;
 
   KeyAnnotationInfo(String *_key) : key(_key) {}
+
+  void Mark() const {
+    key->Mark();
+
+    for (size_t ind = 0; ind < database_cfgs.Size(); ind++)
+      database_cfgs[ind]->Mark();
+
+    for (size_t ind = 0; ind < removed_cfgs.Size(); ind++)
+      removed_cfgs[ind]->Mark();
+
+    for (size_t ind = 0; ind < write_cfgs.Size(); ind++)
+      write_cfgs[ind]->Mark();
+  }
 };
 
 // information about annotations for all blocks queried or written at some
@@ -165,6 +178,37 @@ void LoadDatabases()
   if (access(WORKLIST_FILE, F_OK) == 0)
     g_incremental = true;
 }
+
+void MarkRoots()
+{
+  HashIterate(g_write_body)
+    g_write_body.ItKey()->Mark();
+  HashIterate(g_write_init)
+    g_write_init.ItKey()->Mark();
+  HashIterate(g_write_comp)
+    g_write_comp.ItKey()->Mark();
+  HashIterate(g_write_files)
+    g_write_files.ItKey()->Mark();
+  HashIterate(g_body_reanalyze)
+    g_body_reanalyze.ItKey()->Mark();
+  HashIterate(g_body_file) {
+    g_body_file.ItKey()->Mark();
+    g_body_file.ItValueSingle()->Mark();
+  }
+  HashIterate(g_annot_body) {
+      g_annot_body.ItKey()->Mark();
+      g_annot_body.ItValueSingle()->Mark();
+  }
+  HashIterate(g_annot_init) {
+    g_annot_init.ItKey()->Mark();
+    g_annot_init.ItValueSingle()->Mark();
+  }
+  HashIterate(g_annot_comp) {
+    g_annot_comp.ItKey()->Mark();
+    g_annot_comp.ItValueSingle()->Mark();
+  }
+}
+
 
 // get the annotation info for key within hash, filling it in from xdb
 // if necessary.
@@ -1701,6 +1745,11 @@ TAction* BlockWriteModset(Transaction *t, TOperand *key, TOperand *modset_data)
   call->PushArgument(key);
   call->PushArgument(modset_data);
   return call;
+}
+
+void MarkRoots()
+{
+    Backend_IMPL::MarkRoots();
 }
 
 NAMESPACE_END(Backend)

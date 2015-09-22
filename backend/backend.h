@@ -65,6 +65,8 @@ class TransactionBackend
   // should be unique across all backends.
   static void RegisterFunction(const char *name, TFunction function);
 
+  static void MarkRoots();
+
  public:
   TransactionBackend(TStartFunction start, TFinishFunction finish)
     : m_start(start), m_finish(finish)

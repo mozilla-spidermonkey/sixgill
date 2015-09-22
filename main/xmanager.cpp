@@ -125,6 +125,20 @@ void ClearConnections()
   connections.Clear();
 }
 
+void MaybeGC()
+{
+    static int counter = 0;
+    if (++counter % 100)
+        return;
+
+    ClearMarkBits();
+
+    TransactionBackend::MarkRoots();
+    Backend::MarkRoots();
+
+    size_t swept = Sweep();
+    printf("Collected %ld objects\n", swept);
+}
 
 void handle_event(int fd, short, void *v)
 {
@@ -217,6 +231,8 @@ void handle_event(int fd, short, void *v)
       cdata->write_buf.Reset(0);
     }
   }
+
+  MaybeGC();
 }
 
 void handle_connect(int sockfd, short, void*)

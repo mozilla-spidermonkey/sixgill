@@ -97,4 +97,19 @@ void RegisterHashCons(HashCons<HashObject> *hash)
   g_hashcons_list = hash;
 }
 
+void ClearMarkBits()
+{
+  // Clear mark bits
+  for (HashCons<HashObject> *ht = g_hashcons_list; ht; ht = ht->m_hash_next)
+    ht->ClearMarkBits();
+}
+
+size_t Sweep()
+{
+  size_t swept = 0;
+  for (HashCons<HashObject> *ht = g_hashcons_list; ht; ht = ht->m_hash_next)
+    swept += ht->Sweep();
+  return swept;
+}
+
 NAMESPACE_XGILL_END

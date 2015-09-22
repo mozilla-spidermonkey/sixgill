@@ -119,4 +119,10 @@ void TransactionBackend::RegisterFunction(const char *name,
   functions->PushBack(function);
 }
 
+void TransactionBackend::MarkRoots()
+{
+  HashIterate(g_functions)
+    g_functions.ItKey()->Mark();
+}
+
 NAMESPACE_XGILL_END

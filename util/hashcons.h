@@ -115,6 +115,13 @@ class HashObject
     MarkChildren();
   }
 
+  // just set this object's mark bit, for use when scanning through all objects
+  void SetMarkBit(bool value) {
+    m_marked = value;
+  }
+
+  bool IsMarked() const { return m_marked; }
+
   // put this onto the end of the linked list pointed to by *p_end,
   // in a HashCons with its object count at *pcount.
   void HashInsert(HashObject ***ppend, size_t *pcount);
@@ -303,6 +310,32 @@ class HashCons
   // get the number of objects in this table.
   size_t Size() { return m_object_count; }
 
+  void ClearMarkBits() {
+    for (size_t ii = 0; ii < m_bucket_count; ii++) {
+      HashCons<HashObject>::HashBucket *bp = &m_buckets[ii];
+      for (HashObject *obj = bp->e_begin; obj; obj = obj->m_next)
+        obj->SetMarkBit(false);
+    }
+  }
+
+  size_t Sweep() {
+    size_t swept = 0;
+    for (size_t ii = 0; ii < m_bucket_count; ii++) {
+      HashCons<HashObject>::HashBucket *bp = &m_buckets[ii];
+      HashObject *next;
+      for (HashObject *obj = bp->e_begin; obj; obj = next) {
+        next = obj->m_next;
+        if (!obj->IsMarked()) {
+          obj->HashRemove();
+          obj->UnPersist();
+          delete obj;
+          swept++;
+        }
+      }
+    }
+    return swept;
+  }
+
  private:
   // resize for a new bucket count
   void Resize(size_t bucket_count);
@@ -347,5 +380,8 @@ class HashCons
 };
 
 #include "hashcons_impl.h"
+
+void ClearMarkBits();
+size_t Sweep();
 
 NAMESPACE_XGILL_END

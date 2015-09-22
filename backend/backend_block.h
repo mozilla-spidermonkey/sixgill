@@ -105,6 +105,8 @@ TAction* BlockPopWorklist(Transaction *t, size_t var_result);
 TAction* BlockWriteModset(Transaction *t, TOperand *key,
                           TOperand *modset_data);
 
+void MarkRoots();
+
 NAMESPACE_END(Backend)
 
 NAMESPACE_XGILL_END
