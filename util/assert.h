@@ -58,6 +58,11 @@ inline void AssertFail(const char *file, int line, const char *func,
     }                                                           \
   } while (0)
 
+#define Fail(message)                                           \
+  do {                                                          \
+      AssertFail(__FILE__, __LINE__, __FUNCTION__, (message));  \
+  } while (0)
+
 #define AssertArray(t, len)                     \
   do {                                          \
     Assert(t);                                  \
@@ -78,7 +83,8 @@ inline void AssertFail(const char *file, int line, const char *func,
 
 // if action returns 0 then fail. the action must run regardless
 // of whether Assert is enabled.
-#define Try(action) do { if (!(action)) Assert(false); } while (0)
+#define Try(action) do { if (!(action)) AssertFail(__FILE__, __LINE__, __FUNCTION__, #action); } while (0)
+#define Check(action, message) do { if (!(action)) AssertFail(__FILE__, __LINE__, __FUNCTION__, #action message); } while (0)
 
 // allow disabling the breakpoint as the library defining Breakpoint
 // might not be linked in.

@@ -789,7 +789,8 @@ void WriteWorklistIncremental()
       // memory/modset/summary data later.
 
       static Buffer stub_buf;
-      Try(XdbFindUncompressed(g_body_xdb, function, &stub_buf));
+      if (!XdbFindUncompressed(g_body_xdb, function, &stub_buf))
+          Fail("worklist contains a function in a changed file, but the old function is not in the xdb");
       Buffer read_buf(stub_buf.base, stub_buf.pos - stub_buf.base);
 
       // clone the old CFGs when reading them in to distinguish them
