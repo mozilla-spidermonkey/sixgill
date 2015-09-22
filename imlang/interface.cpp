@@ -577,6 +577,12 @@ extern "C" void XIL_CSUAddFunctionField(XIL_Field field, XIL_Field base,
   csu->AddFunctionField(new_field, new_base, new_func);
 }
 
+extern "C" void XIL_CSUAddBase(const char *base)
+{
+  CompositeCSU *csu = g_active_csus.Back();
+  csu->AddBaseClass(String::Make(base));
+}
+
 extern "C" const char * XIL_MaybeDecorateFunction(const char *name, XIL_Type type)
 {
   GET_OBJECT(Type, type);

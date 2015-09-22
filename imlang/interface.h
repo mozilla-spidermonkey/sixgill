@@ -170,6 +170,7 @@ void XIL_CSUSetBeginLocation(XIL_Location begin_loc);
 void XIL_CSUSetEndLocation(XIL_Location end_loc);
 void XIL_CSUAddDataField(XIL_Field field, int offset);
 void XIL_CSUAddFunctionField(XIL_Field field, XIL_Field base, XIL_Var func);
+void XIL_CSUAddBase(const char *base);
 
 const char * XIL_MaybeDecorateFunction(const char *name, XIL_Type type);
 

@@ -604,6 +604,15 @@ void CompositeCSU::Write(Buffer *buf, const CompositeCSU *csu)
     WriteCloseTag(buf, TAG_FunctionField);
   }
 
+  for (size_t ind = 0; ind < csu->GetBaseCount(); ind++) {
+    const BaseClass &ff = csu->GetBase(ind);
+    WriteOpenTag(buf, TAG_CSUBaseClass);
+    // Consider storing the actual type?
+    // Type::Write(buf, ff.GetCSUType());
+    String::Write(buf, ff.base);
+    WriteCloseTag(buf, TAG_CSUBaseClass);
+  }
+
   WriteCloseTag(buf, TAG_CompositeCSU);
 }
 
@@ -690,6 +699,16 @@ CompositeCSU* CompositeCSU::Read(Buffer *buf)
         res->AddFunctionField(field, base, function);
       break;
     }
+    case TAG_CSUBaseClass: {
+      Try(res);
+      Try(ReadOpenTag(buf, TAG_CSUBaseClass));
+      String *base = String::Read(buf);
+      Try(ReadCloseTag(buf, TAG_CSUBaseClass));
+
+      if (!drop_info)
+        res->AddBaseClass(base);
+      break;
+    }
     default:
       Try(false);
     }
@@ -706,7 +725,8 @@ CompositeCSU* CompositeCSU::Read(Buffer *buf)
 CompositeCSU::CompositeCSU(String *name)
   : m_kind(CSU_Invalid), m_name(name), m_width(0), m_command(NULL),
     m_begin_location(NULL), m_end_location(NULL),
-    m_data_fields(NULL), m_function_fields(NULL)
+    m_data_fields(NULL), m_function_fields(NULL),
+    m_bases(NULL), m_annotations(NULL)
 {
   Assert(m_name);
   m_hash = m_name->Hash();
@@ -756,6 +776,13 @@ void CompositeCSU::AddFunctionField(Field *field, Field *base,
   if (m_function_fields == NULL)
     m_function_fields = new Vector<FunctionField>();
   m_function_fields->PushBack(FunctionField(field, base, function));
+}
+
+void CompositeCSU::AddBaseClass(String *base)
+{
+  if (m_bases == NULL)
+    m_bases = new Vector<BaseClass>();
+  m_bases->PushBack(BaseClass(base));
 }
 
 void CompositeCSU::Print(OutStream &out) const
@@ -822,6 +849,11 @@ void CompositeCSU::MarkChildren() const
         ff.function->Mark();
     }
   }
+
+  if (m_bases) {
+    for (size_t ind = 0; ind < m_bases->Size(); ind++)
+      m_bases->At(ind).base->Mark();
+  }
 }
 
 void CompositeCSU::Persist()
@@ -839,6 +871,11 @@ void CompositeCSU::UnPersist()
   if (m_function_fields) {
     delete m_function_fields;
     m_function_fields = NULL;
+  }
+
+  if (m_bases) {
+    delete m_bases;
+    m_bases = NULL;
   }
 }
 

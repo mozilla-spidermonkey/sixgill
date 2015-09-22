@@ -40,6 +40,8 @@ static inline const char *TagName(tag_t outer, tag_t inner)
       return "Loop";
     case TAG_Exp:
       return "String";
+    case TAG_CSUBaseClass:
+      return "Base";
     default:
       fprintf(logfile, "*** ERROR *** Unknown name for inner string tag: %s\n", TagName(0, outer));
       Assert(false);
@@ -188,6 +190,7 @@ static inline bool CanHaveMultipleInnerTags(tag_t outer, tag_t inner)
     case TAG_Location:
     case TAG_DataField:
     case TAG_FunctionField:
+    case TAG_CSUBaseClass:
       return true;
     default:
       return false;

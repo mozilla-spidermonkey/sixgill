@@ -465,6 +465,21 @@ struct XIL_VirtualFunction* XIL_GetFunctionFields(tree type)
 }
 
 // add all data fields in the specified type to the active CSU.
+void XIL_AddBaseClasses(tree type)
+{
+  tree binfo = TYPE_BINFO(type);
+  if (!binfo)
+      return;
+
+  tree base_binfo;
+  for (int i = 0; BINFO_BASE_ITERATE(binfo, i, base_binfo); i++) {
+    tree basetype = TREE_TYPE(base_binfo);
+    const char *base_name = XIL_CSUName(basetype, NULL);
+    XIL_CSUAddBase(base_name);
+  }
+}
+
+// add all data fields in the specified type to the active CSU.
 void XIL_AddDataFields(tree type)
 {
   tree decl = TYPE_FIELDS(type);
@@ -601,6 +616,7 @@ XIL_Type XIL_TranslateRecordType(tree type)
   XIL_CSUSetWidth(TREE_UINT(size));
 
   XIL_AddDataFields(type);
+  XIL_AddBaseClasses(type);
 
   // add any virtual functions to the type.
   if (c_dialect_cxx()) {

@@ -294,6 +294,17 @@ struct DataField
     : field(_field), offset(_offset) {}
 };
 
+struct BaseClass
+{
+  String *base;
+
+  BaseClass()
+    : base(NULL) {}
+
+  BaseClass(String *_base)
+    : base(_base) {}
+};
+
 // information about a virtual instance function field of a type.
 struct FunctionField
 {
@@ -369,6 +380,15 @@ class CompositeCSU : public HashObject
     return m_data_fields->At(ind);
   }
 
+  // get the base classes of this CSU.
+  size_t GetBaseCount() const {
+    return m_bases ? m_bases->Size() : 0;
+  }
+  const BaseClass& GetBase(size_t ind) const {
+    Assert(m_bases);
+    return m_bases->At(ind);
+  }
+
   // get the virtual instance function fields in this CSU.
   size_t GetFunctionFieldCount() const {
     return m_function_fields ? m_function_fields->Size() : 0;
@@ -391,14 +411,14 @@ class CompositeCSU : public HashObject
   void SetBeginLocation(Location *loc);
   void SetEndLocation(Location *loc);
 
-  // add a base class to this CSU.
-  void AddBaseClass(String *base_class);
-
   // add a data field to this CSU.
   void AddField(Field *field, size_t offset);
 
   // add a virtual function field to this CSU.
   void AddFunctionField(Field *field, Field *base, Variable *function);
+
+  // add a base class to this CSU.
+  void AddBaseClass(String *base_class);
 
   // inherited methods
   void Print(OutStream &out) const;
@@ -418,6 +438,7 @@ class CompositeCSU : public HashObject
 
   Vector<DataField> *m_data_fields;
   Vector<FunctionField> *m_function_fields;
+  Vector<BaseClass> *m_bases;
 
   CompositeCSU(String *name);
   static HashCons<CompositeCSU> g_table;
