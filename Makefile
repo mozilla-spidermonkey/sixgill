@@ -335,7 +335,7 @@ endif # DEBUG
 # other
 
 clean:
-	rm -f ${LIB_OBJS} ${CHK_OBJS} bin/libmemory.a bin/libimlang.a bin/libxgill.a bin/libxcheck.a ${ALL_BINS} main/*.o
+	rm -f ${LIB_OBJS} ${XDB_LIB_OBJS} ${CHK_OBJS} bin/libmemory.a bin/libimlang.a bin/libxgill.a bin/libxcheck.a ${ALL_BINS} main/*.o
 	rm -f config.log config.status
 	make -C gcc clean
 	make -C libevent clean
