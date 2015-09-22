@@ -122,7 +122,7 @@ struct XIL_CString XIL_GlobalName(tree decl)
   const char *mangled = decl_as_string(DECL_ASSEMBLER_NAME(decl), TFF_DECL_SPECIFIERS);
   full_name.str = (char*) xmalloc(strlen(mangled) + 1 + strlen(name.str) + 1);
   full_name.owned = true;
-  sprintf((char*) full_name.str, "%s|%s", mangled, name.str);
+  sprintf((char*) full_name.str, "%s$%s", mangled, name.str);
   XIL_ReleaseCString(&name);
   return full_name;
 }
