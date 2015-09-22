@@ -1759,7 +1759,19 @@ void XIL_ProcessAnnotation(tree node, XIL_PPoint *point, bool all_locals,
                            XIL_Location loc, XIL_AnnotationKind annot_kind,
                            const char *point_text, const char *annot_text)
 {
+  if (annot_kind == XIL_AK_Tag) {
+      if (TREE_CODE(node) == RECORD_TYPE)
+          XIL_CSUAddAnnotation("Tag", annot_text);
+      else if (TREE_CODE(node) == FUNCTION_DECL) {
+          XIL_Var annot_var = NULL;
+          annot_var = XIL_TranslateVar(node);
+          XIL_FunctionAddAnnotation("Tag", annot_text, annot_var);
+      }
+      return;
+  }
+
   gcc_assert(xil_plugin_path);
+
   if (!xil_gcc_path) {
     fprintf(xil_log,
       "ERROR: Can't process annotation without -fplugin-arg-xgill-gcc\n");
