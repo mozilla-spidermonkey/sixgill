@@ -17,9 +17,12 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "xgill.h"
+
+EXTERN_BEGIN
 #include <tree-iterator.h>
 #include <cp/cp-tree.h>
 #include <real.h>
+EXTERN_END
 
 // connect the current point for env to any post side effects from post_point.
 void XIL_ConnectPostPoint(XIL_PPoint *point, struct XIL_PostEdges post_edges)
@@ -149,7 +152,11 @@ const char* XIL_TreeIntString(tree node)
   tree type = TREE_TYPE(node);
   int unsign = TYPE_UNSIGNED(type);
 
+#ifdef TREE_INT_CST
   double_int cst = TREE_INT_CST(node);
+#else
+  double_int cst = double_int::from_shwi(TREE_INT_CST_LOW(node));
+#endif
   mpz_set_double_int(mpz, cst, unsign);
 
   if (unsign) {
@@ -1451,8 +1458,8 @@ static XIL_Field XIL_GetVTableField(tree type, tree node)
       TREE_UNEXPECTED(node);
       return error_field;
     }
-    vtable_index = int(TREE_UINT(offset) / xil_pointer_width);
-    if (size_t(vtable_index) * xil_pointer_width != TREE_UINT(offset)) {
+    vtable_index = (int)(TREE_UINT(offset) / xil_pointer_width);
+    if ((size_t)vtable_index * xil_pointer_width != TREE_UINT(offset)) {
       TREE_UNEXPECTED(node);
       return error_field;
     }

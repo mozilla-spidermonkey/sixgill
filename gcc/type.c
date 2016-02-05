@@ -17,12 +17,15 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "xgill.h"
+
+EXTERN_BEGIN
 #include <cp/cp-tree.h>
+EXTERN_END
 
 XIL_Type XIL_TranslateIntType(tree type)
 {
   int bits = TYPE_SIZE(type) ?
-    TREE_UINT(TYPE_SIZE(type)) : TYPE_PRECISION(type);
+    TREE_SMALL_CONSTANT(TYPE_SIZE(type)) : TYPE_PRECISION(type);
   int bytes = bits / 8;
 
   if (!bytes || bytes * 8 != bits)
@@ -47,7 +50,7 @@ XIL_Type XIL_TranslatePointerType(tree type)
 {
   // get the width of the pointer.
   tree size = TYPE_SIZE_UNIT(type);
-  int bytes = TREE_UINT(size);
+  int bytes = TREE_SMALL_CONSTANT(size);
 
   if (bytes != xil_pointer_width) {
     TREE_UNEXPECTED(type);
@@ -63,7 +66,7 @@ XIL_Type XIL_TranslatePointerType(tree type)
 XIL_Type XIL_TranslateNullptrType(tree type)
 {
   tree size = TYPE_SIZE_UNIT(type);
-  int bytes = TREE_UINT(size);
+  int bytes = TREE_SMALL_CONSTANT(size);
 
   if (bytes != xil_pointer_width) {
     TREE_UNEXPECTED(type);
@@ -91,7 +94,7 @@ XIL_Type XIL_TranslateArrayType(tree type)
         return XIL_TypePointer(xil_element_type, xil_pointer_width);
       }
 
-      if (TREE_INT_CST_HIGH(maxval) != 0) {
+      if (!TYPE_UNSIGNED(maxval) && TREE_INT(maxval) == -1) {
         // should be negative one, which shows up for arrays explicitly
         // declared to have zero elements.
         tree size = TYPE_SIZE(type);
@@ -478,7 +481,8 @@ void XIL_AddBaseClasses(tree type)
       return;
 
   tree base_binfo;
-  for (int i = 0; BINFO_BASE_ITERATE(binfo, i, base_binfo); i++) {
+  int i;
+  for (i = 0; BINFO_BASE_ITERATE(binfo, i, base_binfo); i++) {
     tree basetype = TREE_TYPE(base_binfo);
     const char *base_name = XIL_CSUName(basetype, NULL);
     XIL_CSUAddBase(base_name);
@@ -517,7 +521,7 @@ void XIL_AddDataFields(tree type)
     // compute the byte offset of the field into the structure.
     tree offset = DECL_FIELD_OFFSET(decl);
     tree bit_offset = DECL_FIELD_BIT_OFFSET(decl);
-    int byte_offset = TREE_UINT(offset) + (TREE_UINT(bit_offset) / 8);
+    int byte_offset = TREE_SMALL_CONSTANT(offset) + (TREE_SMALL_CONSTANT(bit_offset) / 8);
 
     XIL_Field field = XIL_TranslateField(decl);
     XIL_CSUAddDataField(field, byte_offset);
@@ -619,7 +623,7 @@ XIL_Type XIL_TranslateRecordType(tree type)
   XIL_Location empty_loc = XIL_MakeLocation("<empty>", 0);
   XIL_CSUSetBeginLocation(empty_loc);
   XIL_CSUSetEndLocation(empty_loc);
-  XIL_CSUSetWidth(TREE_UINT(size));
+  XIL_CSUSetWidth(TREE_SMALL_CONSTANT(size));
 
   XIL_AddDataFields(type);
   XIL_AddBaseClasses(type);

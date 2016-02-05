@@ -18,12 +18,14 @@
 
 #include "xgill.h"
 
+EXTERN_BEGIN
 #include <plugin.h>
 #include <target.h>
 #include <cp/cp-tree.h>
 
 // for annotation processing
 #include <cpplib.h>
+EXTERN_END
 
 // environment utility functions
 
@@ -267,10 +269,10 @@ void XIL_GenerateBlock(tree decl)
     return;
 
   // parse the annotation kind.
-  XIL_AnnotationKind use_kind = XIL_AnnotationKind(0);
+  XIL_AnnotationKind use_kind = (XIL_AnnotationKind) 0;
   if (annotation_kind) {
 #define XIL_TEST_ANNOT(_, STR, VALUE)                           \
-    if (!strcmp(annotation_kind, STR)) use_kind = XIL_AnnotationKind(VALUE);
+    if (!strcmp(annotation_kind, STR)) use_kind = (XIL_AnnotationKind) VALUE;
   XIL_ITERATE_ANNOT(XIL_TEST_ANNOT)
 #undef XIL_TEST_ANNOT
     gcc_assert(use_kind);
@@ -311,9 +313,9 @@ void XIL_GenerateBlock(tree decl)
 
   // get the end file/line from the parser's current position, unless the
   // parser has no current position.
-  const char *end_file = input_filename;
-  int end_line = input_line;
-  if (!input_filename) {
+  const char *end_file = LOCATION_FILE(input_location);
+  int end_line = LOCATION_LINE(input_location);
+  if (!end_file) {
     end_file = decl_file;
     end_line = decl_line;
   }
@@ -459,7 +461,7 @@ void gcc_plugin_start_unit(void *gcc_data, void *user_data)
   addr_space_t as = ADDR_SPACE_GENERIC;
   enum machine_mode mode = targetm.addr_space.pointer_mode (as);
   tree size = size_int (GET_MODE_SIZE (mode));
-  xil_pointer_width = TREE_UINT(size);
+  xil_pointer_width = TREE_SMALL_CONSTANT(size);
 }
 
 // handler to pick up the attribute indicating the name of the annotation
@@ -476,14 +478,15 @@ tree annotation_name_handler(tree *node, tree name, tree args,
   return NULL;
 }
 
-// XXX disabled for plugin compilation with CXX
-#if 0
-
 static struct attribute_spec annotation_name_attribute = {
   .name = "annot_name",
   .min_length = 1,
   .max_length = 1,
-  .handler = annotation_name_handler
+  .decl_required = 0,
+  .type_required = 0,
+  .function_type_required = 0,
+  .handler = annotation_name_handler,
+  .affects_type_identity = 0,
 };
 
 // handler to pick up the tree for the 'this' CSU type.
@@ -499,34 +502,58 @@ static struct attribute_spec annotation_this_attribute = {
   .name = "annot_this",
   .min_length = 0,
   .max_length = 0,
-  .handler = annotation_this_handler
+  .decl_required = 0,
+  .type_required = 0,
+  .function_type_required = 0,
+  .handler = annotation_this_handler,
+  .affects_type_identity = 0,
 };
 
 static struct attribute_spec annotation_this_var_attribute = {
   .name = "annot_this_var",
   .min_length = 1,
-  .max_length = 1
+  .max_length = 1,
+  .decl_required = 0,
+  .type_required = 0,
+  .function_type_required = 0,
+  .handler = NULL,
+  .affects_type_identity = 0,
 };
 
 // attribute attached to global functions/variables, indicating the full name.
 static struct attribute_spec annotation_global_attribute = {
   .name = "annot_global",
   .min_length = 1,
-  .max_length = 1
+  .max_length = 1,
+  .decl_required = 0,
+  .type_required = 0,
+  .function_type_required = 0,
+  .handler = NULL,
+  .affects_type_identity = 0,
 };
 
 // attribute attached to parameters, indicating the parameter index.
 static struct attribute_spec annotation_param_attribute = {
   .name = "annot_param",
   .min_length = 1,
-  .max_length = 1
+  .max_length = 1,
+  .decl_required = 0,
+  .type_required = 0,
+  .function_type_required = 0,
+  .handler = NULL,
+  .affects_type_identity = 0,
 };
 
 // attribute attached to return variables.
 static struct attribute_spec annotation_return_attribute = {
   .name = "annot_return",
   .min_length = 0,
-  .max_length = 0
+  .max_length = 0,
+  .decl_required = 0,
+  .type_required = 0,
+  .function_type_required = 0,
+  .handler = NULL,
+  .affects_type_identity = 0,
 };
 
 // attribute attached to local variables, indicating the actual name
@@ -534,7 +561,12 @@ static struct attribute_spec annotation_return_attribute = {
 static struct attribute_spec annotation_local_attribute = {
   .name = "annot_local",
   .min_length = 1,
-  .max_length = 1
+  .max_length = 1,
+  .decl_required = 0,
+  .type_required = 0,
+  .function_type_required = 0,
+  .handler = NULL,
+  .affects_type_identity = 0,
 };
 
 // optional attribute attached to any of the above variables,
@@ -542,7 +574,12 @@ static struct attribute_spec annotation_local_attribute = {
 static struct attribute_spec annotation_source_attribute = {
   .name = "annot_source",
   .min_length = 1,
-  .max_length = 1
+  .max_length = 1,
+  .decl_required = 0,
+  .type_required = 0,
+  .function_type_required = 0,
+  .handler = NULL,
+  .affects_type_identity = 0,
 };
 
 void gcc_plugin_attributes(void *gcc_data, void *user_data)
@@ -551,7 +588,12 @@ void gcc_plugin_attributes(void *gcc_data, void *user_data)
   static struct attribute_spec NAME ## _attribute = {   \
     .name = STR,                                        \
     .min_length = 1,                                    \
-    .max_length = 1                                     \
+    .max_length = 1,                                    \
+    .decl_required = 0,                                 \
+    .type_required = 0,                                 \
+    .function_type_required = 0,                        \
+    .handler = NULL,                                    \
+    .affects_type_identity = 0,                         \
   };                                                    \
   register_attribute(&(NAME ## _attribute));
 
@@ -568,13 +610,6 @@ void gcc_plugin_attributes(void *gcc_data, void *user_data)
   register_attribute(&annotation_local_attribute);
   register_attribute(&annotation_source_attribute);
 }
-
-#else
-
-void gcc_plugin_attributes(void *gcc_data, void *user_data)
-{}
-
-#endif
 
 void gcc_plugin_pre_genericize(void *gcc_data, void *user_data)
 {

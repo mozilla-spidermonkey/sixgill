@@ -21,14 +21,53 @@
 #ifndef XIL_MAIN
 #define XIL_MAIN
 
-#include <gcc-plugin.h>
 #include <config.h>
+
+// gcc 4.9.1's plugin headers (eg coretypes.h) now include some unconditional
+// C++-isms, so we have to compile xgill with g++. But b2g's android-eabi gcc
+// 4.9.1 is compiled with extern "C" linkage in cc1plus, so we have to compile
+// the C parts of xgill with gcc. Wrapping everything with extern "C" doesn't
+// work because there are some template definitions that cannot work within
+// extern "C".
+//
+// Resolve the dilemma by explicitly using "C" linkage for just the one file
+// that seems to be necessary. (This will get included again later, while
+// compiling in regular C++ mode, but by that time we'll have already declared
+// the linkage to be C.)
+//
+
+// First, the gcc plugin stuff includes its own config.h, which defines a bunch
+// of standard autoheader stuff that will conflict with ours. So undefine theirs.
+#undef PACKAGE_BUGREPORT
+#undef PACKAGE_NAME
+#undef PACKAGE_STRING
+#undef PACKAGE_TARNAME
+#undef PACKAGE_VERSION
+#include "../config.h"
+
+// Now we want to include double-int.h in an extern "C" block, but it includes
+// gmp.h, which contains templates. So include it here first, so it will be
+// skipped when processing double-int.h.
+#include <gmp.h>
+
+EXTERN_BEGIN
+#include <gcc-plugin.h>
 #include <system.h>
+#include <double-int.h>
 #include <coretypes.h>
 #include <tm.h>
 #include <tree.h>
+#include <vec.h>
+
+#include <cpplib.h>
+
+# ifdef HAVE_PRINT_TREE_H
+#  include <print-tree.h>
+# endif
 
 #include "../imlang/interface.h"
+
+EXTERN_END
 
 // gcc version compatibility
 
@@ -530,11 +569,29 @@ void XIL_DebugPrint(tree node);
   } while (0)
 
 // get a small unsigned integer constant from a tree.
+#ifdef TREE_INT_CST_HIGH
 #define TREE_UINT(TREE)                                 \
   ({ gcc_assert(TREE);                                  \
      TREE_CHECK(TREE, INTEGER_CST);                     \
      gcc_assert(TREE_INT_CST_HIGH(TREE) == 0);          \
      TREE_INT_CST_LOW(TREE); })
+#else
+#define TREE_UINT(TREE)                                 \
+  ({ gcc_assert(TREE);                                  \
+     TREE_CHECK(TREE, INTEGER_CST);                     \
+     gcc_assert(TYPE_UNSIGNED(TREE));                   \
+     TREE_INT_CST_LOW(TREE); })
+#endif
+
+// get a small signed integer constant from a tree.
+#define TREE_INT(TREE)                                  \
+  ({ gcc_assert(TREE);                                  \
+     TREE_CHECK(TREE, INTEGER_CST);                     \
+     gcc_assert(!TYPE_UNSIGNED(TREE));                  \
+     TREE_INT_CST_LOW(TREE); })
+
+#define TREE_SMALL_CONSTANT(TREE)                       \
+    TYPE_UNSIGNED(TREE) ? TREE_UINT(TREE) : TREE_INT(TREE)
 
 // get an integer constant from a tree as a string.
 const char* XIL_TreeIntString(tree node);

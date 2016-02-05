@@ -86,23 +86,16 @@ fi
 AC_SUBST(USE_YICES)
 AC_SUBST(YICES_DIR)
 
-dnl ***********************
-dnl GCC plugin support
-dnl ***********************
-GCC_PLUGIN_SUPPORT=no
-GCC_PLUGIN_HEADERS=`$CC -print-file-name=plugin/include | awk '{print $NF}'`
-# if we can't find the plugin/include path, we just get back "plugin/include"
-if test "x$GCC_PLUGIN_HEADERS" != "xplugin/include" ; then
-   GCC_PLUGIN_SUPPORT=yes
-else
-   AC_MSG_WARN([GCC plugin support not available, consider modifying your path to include gcc 4.5 or later])
-fi
-AC_SUBST(GCC_PLUGIN_SUPPORT)
-AC_SUBST(GCC_PLUGIN_HEADERS)
-
 dnl **********************
 dnl Sometimes symbols in cc1/cc1plus are extern "C", sometimes mangled C++
 dnl **********************
+
+AC_ARG_WITH([target-cc],
+            [AS_HELP_STRING([--target-cc=PATH],
+              [Compiler that will run with the plugin])],
+            [TARGET_CC=$withval],
+            [TARGET_CC=$CC])
+
 AC_MSG_CHECKING([symbol linkage in cc1])
 TARGET_CC=${TARGET_CC-$CC}
 CC1_BINARY=`$TARGET_CC --print-prog-name=cc1`
@@ -113,22 +106,53 @@ CC1PLUS_BINARY=`$TARGET_CC --print-prog-name=cc1plus`
 CC1PLUS_LINKAGE=`nm -D $CC1PLUS_BINARY | egrep -q 'T print_node$' && echo C || echo mangled`
 AC_MSG_RESULT($CC1PLUS_LINKAGE)
 if test "$CC1_LINKAGE" = "$CC1PLUS_LINKAGE"; then
+  # Newer gcc plugin headers require C++ compilation
+  PLUGIN_CC=$CXX
   if test "$CC1_LINKAGE" = "mangled"; then
-    PLUGIN_CC=$CXX
+    CC1PLUS_C_LINKAGE=
+    AC_DEFINE([EXTERN_BEGIN], [], [Beginning of extern section])
+    AC_DEFINE([EXTERN_END], [], [End of extern section])
   else
-    PLUGIN_CC=$CC
+    CC1PLUS_C_LINKAGE=1
+    AC_DEFINE([CC1PLUS_C_LINKAGE],[1], [Whether the cc1plus binary links using C or mangled C++ linkage])
+    AC_DEFINE([EXTERN_BEGIN], [extern "C" {], [Beginning of extern section])
+    AC_DEFINE([EXTERN_END], [}], [End of extern section])
   fi
 else
   AC_MSG_ERROR([cc1 and cc1plus use different linkage])
 fi
 AC_SUBST(PLUGIN_CC)
 
+# TARGET_CC is the compiler that will be running with the plugin
+AC_SUBST(TARGET_CC)
+
+dnl ***********************
+dnl GCC plugin support
+dnl ***********************
+AC_MSG_CHECKING([gcc plugin headers])
+GCC_PLUGIN_SUPPORT=no
+GCC_PLUGIN_HEADERS=`$TARGET_CC -print-file-name=plugin/include | awk '{print $NF}'`
+# if we can't find the plugin/include path, we just get back "plugin/include"
+if test "x$GCC_PLUGIN_HEADERS" != "xplugin/include" ; then
+   GCC_PLUGIN_SUPPORT=yes
+   AC_MSG_RESULT($GCC_PLUGIN_HEADERS)
+   CPPFLAGS="${CPPFLAGS} -I$GCC_PLUGIN_HEADERS"
+else
+   AC_MSG_WARN([GCC plugin support not available, consider modifying your path to include gcc 4.5 or later])
+fi
+AC_SUBST(GCC_PLUGIN_SUPPORT)
+AC_SUBST(GCC_PLUGIN_HEADERS)
+AC_CHECK_HEADERS([print-tree.h stringpool.h],,,[
+#include <gcc-plugin.h>
+#include <vec.h>
+])
+
 dnl ***********************
 dnl Results
 dnl ***********************
 AC_CONFIG_FILES([config.mk])
 
-AC_OUTPUT
+AC_OUTPUT([test/run-test.py])
 
 AC_MSG_RESULT([
 

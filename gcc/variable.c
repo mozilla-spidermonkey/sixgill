@@ -17,7 +17,10 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "xgill.h"
+
+EXTERN_BEGIN
 #include <cp/cp-tree.h>
+EXTERN_END
 
 bool XIL_IsDestructor(tree decl)
 {
@@ -227,17 +230,17 @@ XIL_Var generate_TranslateVar(tree decl)
       TREE_CHECK(type, METHOD_TYPE);
       tree base_type = TYPE_METHOD_BASETYPE(type);
       XIL_Type xil_base_type = XIL_TranslateType(base_type);
-      const char *new_name = XIL_GetTypeCSUName(xil_base_type);
+      const char *base_name = XIL_GetTypeCSUName(xil_base_type);
 
-      const char *pos = strchr(new_name,' ');
-      if (pos) new_name = pos + 1;
+      const char *pos = strchr(base_name,' ');
+      if (pos) base_name = pos + 1;
 
-      pos = strrchr(new_name, ':');
-      if (pos) new_name = pos + 1;
+      pos = strrchr(base_name, ':');
+      if (pos) base_name = pos + 1;
 
-      new_name = xstrdup(new_name);
-      pos = strchr(new_name,'<');
-      if (pos) *const_cast<char*>(pos) = 0;
+      char *new_name = xstrdup(base_name);
+      char *cut_pos = strchr(new_name,'<');
+      if (cut_pos) *cut_pos = 0;
 
       XIL_SetCString(&name, new_name, 1);
     }

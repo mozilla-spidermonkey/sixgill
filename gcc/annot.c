@@ -1,8 +1,14 @@
-
 #include "xgill.h"
+
+EXTERN_BEGIN
 #include <c-family/c-pragma.h>
 #include <cpplib.h>
 #include <cp/cp-tree.h>
+
+#ifdef HAVE_STRINGPOOL_H
+# include <stringpool.h>
+#endif
+EXTERN_END
 
 // annotation file overview. we get the annotations as raw strings and need
 // to parse them in the context where they appeared in the source. we do this
@@ -553,7 +559,7 @@ void XIL_ScanDefineType(tree type)
     VEC(tree,gc) *methods = CLASSTYPE_METHOD_VEC(type);
     int ind = 2;
     tree node = NULL;
-    for (; VEC_iterate(tree,methods,ind,node); ind++) {
+    for (; methods && VEC_iterate(tree,methods,ind,node); ind++) {
       while (node) {
         tree method = OVL_CURRENT(node);
         if (TREE_CODE(method) == FUNCTION_DECL)
@@ -1027,7 +1033,7 @@ void XIL_PrintDeclaration(FILE *file, tree type, const char *name)
           return;
         }
 
-        if (TREE_INT_CST_HIGH(maxval) == 0)
+        if (TYPE_UNSIGNED(maxval) || TREE_INT(maxval) == 0)
           count = TREE_UINT(maxval) + 1;
       }
     }
@@ -1233,7 +1239,7 @@ void XIL_PrintStruct(FILE *file, const char *csu_name, tree type)
     VEC(tree,gc) *methods = CLASSTYPE_METHOD_VEC(type);
     int ind = 2;
     tree node = NULL;
-    for (; VEC_iterate(tree,methods,ind,node); ind++) {
+    for (; methods && VEC_iterate(tree,methods,ind,node); ind++) {
       while (node) {
         // the node may or may not be an overload. these handle both cases.
         tree method = OVL_CURRENT(node);
@@ -1832,7 +1838,7 @@ void XIL_ProcessAnnotation(tree node, XIL_PPoint *point, bool all_locals,
     sprintf(annotation_file, "%s/tmp.XXXXXX", xil_log_directory);
   else
     strcpy(annotation_file, "tmp.XXXXXX");
-  mktemp(annotation_file);
+  mkstemp(annotation_file);
 
   char *out_file = (char*) xmalloc(strlen(annotation_file) + 10);
   sprintf(out_file, "%s.out", annotation_file);
