@@ -34,6 +34,8 @@
 typedef off_t off64_t;
 #endif
 
+#define ftruncate64 ftruncate
+
 NAMESPACE_XGILL_BEGIN
 
 /////////////////////////////////////////////////////////////////////
@@ -532,7 +534,7 @@ uint32_t Xdb::do_hash(const uint8_t *data, uint32_t size)
 
 void Xdb::do_seek(uint64_t offset)
 {
-  off64_t ret_off = lseek64(m_fd, offset, L_SET);
+  off64_t ret_off = lseek64(m_fd, offset, SEEK_SET);
   if (ret_off != (off64_t) offset) {
     printf("ERROR: lseek64() failed: %s\n", strerror(errno));
     set_error();
