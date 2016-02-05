@@ -311,7 +311,7 @@ const char* XIL_CSUName(tree type, const char *name)
   }
 
   // template instantiations do not have names filled in. get one now.
-  if (c_dialect_cxx() && !*field_csu && CLASSTYPE_USE_TEMPLATE(type)) {
+  if (c_dialect_cxx() && !*field_csu && CLASS_TYPE_P(type) && CLASSTYPE_USE_TEMPLATE(type)) {
     const char *new_name = type_as_string(type, TFF_CLASS_KEY_OR_ENUM | TFF_CHASE_TYPEDEF);
     *field_csu = XIL_TypeCSU(new_name, NULL);
   }
@@ -629,7 +629,7 @@ XIL_Type XIL_TranslateRecordType(tree type)
   XIL_AddBaseClasses(type);
 
   // add any virtual functions to the type.
-  if (c_dialect_cxx()) {
+  if (c_dialect_cxx() && CLASS_TYPE_P(type)) {
     // first generate types for all virtual methods in this class.
     // the function fields need to be able to get types for these methods
     // without triggering a reentrant generation for a record type.
