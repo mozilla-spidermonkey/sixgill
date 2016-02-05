@@ -18,6 +18,10 @@
 
 #include "xgill.h"
 
+// Handle constructs in cases where it is too difficult to model accurate
+// behavior, but not handling the construct will reject too much code.
+#define MAXIMIZE_COVERAGE 1
+
 EXTERN_BEGIN
 #include <tree-iterator.h>
 #include <cp/cp-tree.h>
@@ -2243,6 +2247,12 @@ void XIL_TranslateExpression(struct XIL_TreeEnv *env, tree node)
     return;
   }
 
+#ifdef MAXIMIZE_COVERAGE
+  // Process throw(E) as if it were an unused expression E. Not at all accurate
+  // in its effects, but it will at least avoid discarding lots of header
+  // functions that throw.
+  case THROW_EXPR:
+#endif
   case EXPR_STMT: {
     tree operand = TREE_OPERAND(node, 0);
 
@@ -2290,6 +2300,9 @@ void XIL_TranslateExpression(struct XIL_TreeEnv *env, tree node)
     XIL_ProcessResult(env, result);
     return;
   }
+
+  case MUST_NOT_THROW_EXPR:
+    return;
 
   default:
     TREE_UNEXPECTED_RESULT(env, node);
