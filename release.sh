@@ -12,6 +12,7 @@ MESSAGE=
 
 DO_CLEAN=1
 DO_BUILD=1
+DO_TEST=
 DO_PACKAGE=1
 DO_EMPLACE=1
 DO_DISTRIBUTE=1
@@ -23,9 +24,23 @@ while [ "$#" -gt 0 ]; do
     shift
     DO_CLEAN=
     DO_BUILD=
+  elif [ "$1" = "--test" ]; then
+    shift
+    DO_TEST=1
+  elif [ "$1" = "--no-test" ]; then
+    shift
+    DO_TEST=
   elif [ "$1" = "--build-and-package" ]; then
     shift
     DO_BUILD=1
+    DO_TEST=1
+    DO_PACKAGE=1
+    DO_EMPLACE=
+    DO_DISTRIBUTE=
+  elif [ "$1" = "--build" ]; then
+    shift
+    DO_BUILD=1
+    DO_TEST=
     DO_PACKAGE=1
     DO_EMPLACE=
     DO_DISTRIBUTE=
@@ -58,17 +73,6 @@ while [ "$#" -gt 0 ]; do
   fi
 done
 
-function need_target_cc() {
-  if [ -z "$TARGET_CC" ]; then
-   echo -n "TARGET_CC unset. Enter the path to the compiler that will run the plugin> "
-    read TARGET_CC
-  fi
-  if [ ! -x "$TARGET_CC" ]; then
-    echo "Invalid TARGET_CC: $TARGET_CC" >&2
-    exit 1
-  fi
-}
-
 # function need_compiler() {
 #   COMPILER="${COMPILER:-$CC}"
 #   if [ -z "$COMPILER" ]; then
@@ -89,9 +93,15 @@ function need_message() {
 
 function build() {
   ./autogen.sh
-  export TARGET_CC
   ./configure "$@"
   make
+}
+
+function run_test() {
+  echo '------------ running tests ---------------'
+  PYTHON=/tools/python27/bin/python
+  [ -x "$PYTHON" ] || PYTHON=python
+  ( cd test; $PYTHON run-test.py )
 }
 
 function make_checksum() {
@@ -119,7 +129,7 @@ function package() {
   FOLDER="$SHORT-sixgill"
   mkdir $FOLDER
   mv $D/sixgill.tar.xz $FOLDER
-  cp setup.sh.sixgill $FOLDER
+  # cp setup.sh.sixgill $FOLDER
   echo "** Created folder $FOLDER"
 }
 
@@ -150,7 +160,7 @@ function emplace() {
   (
     cd $FOLDER
     [ -f manifest.tt ] && rm manifest.tt
-    for f in *; do [[ $f = manifest.tt ]] || python $TOOLTOOL add "$f" --visibility public; done
+    for f in *; do [[ $f = manifest.tt ]] || python $TOOLTOOL add "$f" --visibility public --unpack; done
   )
   json $FOLDER/manifest.tt -e 'unshift {}' -e 'cd 0' -e "set hg_id \"$(hg id)\"" -e 'write /tmp/release.manifest.tmp'
   cp /tmp/release.manifest.tmp "$MANIFEST"
@@ -165,12 +175,12 @@ function distribute() {
   echo "Uploaded contents of $FOLDER"
 }
 
-[ -n "$DO_BUILD" ] && need_target_cc
 [ -n "$DO_PACKAGE" ] || need_folder
 [ -n "$DO_EMPLACE" ] && need_manifest
 [ -n "$DO_DISTRIBUTE" ] && need_message
 
 [ -n "$DO_BUILD" ] && build "$@"
+[ -n "$DO_TEST" ] && run_test
 [ -n "$DO_PACKAGE" ] && package
 [ -n "$DO_EMPLACE" ] && emplace
 [ -n "$DO_DISTRIBUTE" ] && distribute
