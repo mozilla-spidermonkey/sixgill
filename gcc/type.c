@@ -530,9 +530,6 @@ int xil_generate_record_types = 1;
 
 XIL_Type XIL_TranslateRecordType(tree type)
 {
-  static XIL_Type error_csu;
-  if (!error_csu) error_csu = XIL_TypeCSU("error", NULL);
-
   // get the name to use for the CSU.
   const char *name = XIL_CSUName(type, NULL);
 
@@ -548,9 +545,12 @@ XIL_Type XIL_TranslateRecordType(tree type)
     }
 
     if (!name) {
-      TREE_UNEXPECTED(type);
-      return error_csu;
+      if (c_dialect_cxx())
+        name = type_as_string(type, TFF_CLASS_KEY_OR_ENUM | TFF_CHASE_TYPEDEF);
+      else
+        name = "<unknown-type>";
     }
+    XIL_CSUName(type, name);
   }
 
   // figure out whether we will want to try to fill in this CSU.
