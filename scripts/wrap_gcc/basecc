@@ -28,6 +28,7 @@ use strict;
 
 use FindBin;
 use Cwd 'abs_path';
+use File::Basename qw(dirname basename);
 
 # Some installations of ccache will put another gcc wrapper in $PATH, and we
 # may end up calling ourselves indirectly recursively if the directory
@@ -36,13 +37,24 @@ use Cwd 'abs_path';
 my @paths = grep { !/ccache/ && abs_path($_) ne abs_path($FindBin::Bin) } split(/:/, $ENV{PATH});
 $ENV{PATH} = join(':', @paths);
 
+my $full_ccname = shift or die "USAGE: basecc ccname ccarg*\n";
+my $ccname = basename($full_ccname);
+
 # directory containing the real versions of the gcc binaries.
 my $gccdir = $ENV{GCCDIR};
 if (!$gccdir) {
-    ($gccdir) = grep { defined($_) && (abs_path($_) ne abs_path($FindBin::Bin)) && (-x "$_/gcc") }
-                     ($ENV{GCCDIR}, split(/:/, $ENV{PATH}), "/usr/local/bin");
+    ($gccdir) = grep { defined($_) && (abs_path($_) ne abs_path($FindBin::Bin)) && (-x "$_/$ccname") }
+                     (dirname($full_ccname), split(/:/, $ENV{PATH}), "/usr/local/bin");
 }
 die "Cannot find real gcc binaries" if ! $gccdir;
+
+if ($ccname !~ /(cc|\+\+)$/) {
+    exec("$gccdir/$ccname", @ARGV)
+        or die "exec $gccdir/$ccname failed: $!";
+}
+
+my ($gccpath) = glob("$gccdir/*gcc");
+die "Cannot find gcc binary" if ! $gccpath;
 
 my ($xsource) = grep { (-x "$_/xsource") } (split(/:/, $ENV{PATH}), "$FindBin::Bin/../../bin");
 die "Cannot find xsource binary" if ! $xsource;
@@ -56,9 +68,6 @@ my $wrapdir = $FindBin::Bin;
 ##########################
 # general purpose script #
 ##########################
-
-# get the name of the binary we are emulating.
-my $ccname = shift or die "USAGE: basecc ccname ccarg*\n";
 
 # read in the configuration data if there is any.
 my $basedir = "";
@@ -83,7 +92,7 @@ $sourceargs .= " -remote=$remote" if ($remote ne "");
 
 # plugin arguments to pass to the compiler.
 my $xgillargs = " -DXGILL_PLUGIN -fplugin=$plugindir/xgill.so";
-$xgillargs .= " -fplugin-arg-xgill-gcc=$gccdir/gcc";
+$xgillargs .= " -fplugin-arg-xgill-gcc=$gccpath";
 $xgillargs .= " -fplugin-arg-xgill-basedir=$basedir" if ($basedir ne "");
 $xgillargs .= " -fplugin-arg-xgill-remote=$remote" if ($remote ne "");
 $xgillargs .= " -fplugin-arg-xgill-log=$logfile" if ($logfile ne "");
