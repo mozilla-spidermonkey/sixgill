@@ -6,7 +6,6 @@ from subprocess import check_output
 topdir = os.path.abspath(os.path.join(os.path.abspath(os.path.dirname(__file__)), ".."))
 bindir = os.path.join(topdir, "bin")
 plugin = os.path.join(topdir, "gcc", "xgill.so")
-print("topdir = %s" % topdir)
 
 if not os.path.exists("test-output"):
     os.mkdir("test-output")
@@ -76,7 +75,7 @@ for name in tests:
 
     def compile(source):
         cmd = "{CXX} -c {source} -fplugin={sixgill}".format(source=os.path.join(indir, source),
-                                                            CXX=os.environ.get("CXX", os.environ.get("CC", "g++")),
+                                                            CXX=os.environ.get("CXX", os.environ.get("CC", "gcc")),
                                                             sixgill=plugin)
         print("Running %s" % cmd)
         os.system(cmd)

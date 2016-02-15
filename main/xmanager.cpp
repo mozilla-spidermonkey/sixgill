@@ -292,6 +292,10 @@ bool GetCurrentHost(int sockfd,
 
   // try to find the IP address corresponding to that current host
   struct hostent* ent = gethostbyname(hostname);
+
+  // If the current host's hostname is not resolvable, fall back to localhost.
+  if (ent == NULL)
+      ent = gethostbyname("localhost");
   if (ent != NULL && ent->h_addr_list && ent->h_length == 4) {
     char **phost = ent->h_addr_list;
     while (*phost) {
