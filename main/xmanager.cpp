@@ -161,6 +161,11 @@ void handle_event(int fd, short, void *v)
   else {
     size_t length = cdata->read_buf.pos - cdata->read_buf.base;
 
+#ifdef TRACE_SPEW
+    fprintf(stderr, "EVENT on %sconnection #%ld fd %d\n",
+            cdata->live ? "" : "DEAD ", index, cdata->fd);
+#endif
+
     success = ReadPacket(fd, &cdata->read_buf);
     if (success) {
       size_t data_length =
@@ -223,6 +228,9 @@ void handle_event(int fd, short, void *v)
     }
     else if ((ssize_t) length == cdata->read_buf.pos - cdata->read_buf.base) {
       // connection is closed. there is nothing to read so remove the event.
+#ifdef TRACE_SPEW
+      fprintf(stderr, "CLOSED fd %d\n", cdata->fd);
+#endif
       event_del(&cdata->ev);
       close(cdata->fd);
 
@@ -246,6 +254,10 @@ void handle_connect(int sockfd, short, void*)
   }
 
   ConnectData *cdata = new ConnectData();
+
+#ifdef TRACE_SPEW
+  fprintf(stderr, "CONNECT to fd %d\n", newfd);
+#endif
   connections.PushBack(cdata);
 
   cdata->live = true;
