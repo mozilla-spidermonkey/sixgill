@@ -58,6 +58,8 @@ static inline const char *TagName(tag_t outer, tag_t inner)
       fprintf(logfile, "*** ERROR *** Unknown name for inner integer tag: %s\n", TagName(0, outer));
       Assert(false);
     }
+  case TAG_Annotation:
+    return "Annotation";
   default:
     fprintf(logfile, "*** ERROR *** Unknown unnamed tag: %d\n", (int) inner);
     Assert(false);
@@ -83,6 +85,7 @@ static void FillTagNames()
   ADD_TAG(FieldInstanceFunction);
   ADD_TAG(DataField);
   ADD_TAG(FunctionField);
+  ADD_TAG(Annotation);
   ADD_TAG(Variable);
   ADD_TAG(Exp);
   ADD_TAG(ExpUnsigned);
@@ -171,6 +174,7 @@ static inline bool CanHaveMultipleInnerTags(tag_t outer, tag_t inner)
   switch (outer) {
   case TAG_Variable:
   case TAG_Field:
+  case TAG_Annotation:
     return inner == TAG_Name;
   case TAG_BlockCFG:
     switch (inner) {
@@ -191,6 +195,7 @@ static inline bool CanHaveMultipleInnerTags(tag_t outer, tag_t inner)
     case TAG_DataField:
     case TAG_FunctionField:
     case TAG_CSUBaseClass:
+    case TAG_Annotation:
       return true;
     default:
       return false;
@@ -213,6 +218,8 @@ static inline bool CanHaveMultipleInnerTags(tag_t outer, tag_t inner)
     return inner == TAG_Exp;
   case TAG_CallEdgeSet:
     return inner == TAG_CallEdge;
+  case TAG_Type:
+    return inner == TAG_Annotation;
   default:
     return false;
   }

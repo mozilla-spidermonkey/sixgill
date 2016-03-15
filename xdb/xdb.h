@@ -74,6 +74,9 @@ class Xdb
   // returns whether there is a value associated with the key buffer.
   bool HasKey(Buffer *key);
 
+  // returns stream id of key or zero if not found.
+  uint32_t LookupKey(Buffer *key);
+
   // store into the data buffer the value associated with the key buffer.
   // true on success, false on not found.
   bool Find(Buffer *key, Buffer *data);

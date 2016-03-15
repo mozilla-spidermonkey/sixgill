@@ -171,6 +171,9 @@ void XIL_CSUSetEndLocation(XIL_Location end_loc);
 void XIL_CSUAddDataField(XIL_Field field, int offset);
 void XIL_CSUAddFunctionField(XIL_Field field, XIL_Field base, XIL_Var func);
 void XIL_CSUAddBase(const char *base);
+void XIL_CSUAddAnnotation(const char *annType, const char *value);
+
+void XIL_FunctionAddAnnotation(const char *annType, const char *value, XIL_Var func);
 
 const char * XIL_MaybeDecorateFunction(const char *name, XIL_Type type);
 

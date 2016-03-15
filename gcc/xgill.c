@@ -645,6 +645,11 @@ void gcc_plugin_pre_genericize(void *gcc_data, void *user_data)
   if (*skip_info)
     return;
 
+  // New-style annotations require the function to be processed before the
+  // annotations.
+  if (!xil_has_annotation)
+    XIL_GenerateBlock(decl);
+
   // check for annotations on this function.
   tree attr = DECL_ATTRIBUTES(decl);
   while (attr) {
@@ -652,7 +657,11 @@ void gcc_plugin_pre_genericize(void *gcc_data, void *user_data)
     attr = TREE_CHAIN(attr);
   }
 
-  XIL_GenerateBlock(decl);
+  // Using traditional-style annotations that generate temporary files and call
+  // a subcompiler on them. These need the annotations to exist at the time of
+  // XIL_GenerateBlock.
+  if (xil_has_annotation)
+      XIL_GenerateBlock(decl);
 
   // future parameter declarations will be for a different function.
   xil_pending_param_decls = NULL;

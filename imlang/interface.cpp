@@ -470,9 +470,10 @@ XIL_Type XIL_TypeFunction(XIL_Type return_type, const char *this_csu,
     new_arg_types.PushBack(arg_type);
   }
 
+  Vector<Annotation> no_annotations;
   return (XIL_Type)
     Type::MakeFunction(new_return_type, csu_type,
-                       (bool) varargs, new_arg_types);
+                       (bool) varargs, new_arg_types, no_annotations);
 }
 
 const char* XIL_GetTypeCSUName(XIL_Type csu_type)
@@ -581,6 +582,21 @@ extern "C" void XIL_CSUAddBase(const char *base)
 {
   CompositeCSU *csu = g_active_csus.Back();
   csu->AddBaseClass(String::Make(base));
+}
+
+extern "C" void XIL_CSUAddAnnotation(const char *annType, const char *value)
+{
+  CompositeCSU *csu = g_active_csus.Back();
+  csu->AddAnnotation(String::Make(annType), String::Make(value));
+}
+
+extern "C" void XIL_FunctionAddAnnotation(const char *annType, const char *value,
+                                          XIL_Var func)
+{
+  GET_OBJECT(Variable, func);
+  TypeFunction *ntype = (TypeFunction*) new_func->GetType();
+  Assert(ntype);
+  ntype->AddAnnotation(String::Make(annType), String::Make(value));
 }
 
 extern "C" const char * XIL_MaybeDecorateFunction(const char *name, XIL_Type type)

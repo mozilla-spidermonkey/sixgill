@@ -40,6 +40,7 @@
 //   TAG_TypeFunctionCSU (function)
 //   TAG_TypeFunctionVarArgs (function)
 //   TAG_TypeFunctionArguments (function)
+//   TAG_Annotation (multiple)
 #define TAG_Type  1100
 
 // children: none. if present the function is varargs
@@ -64,6 +65,7 @@
 //   list of TAG_CSUBaseClass
 //   list of TAG_DataField
 //   list of TAG_FunctionField
+//   list of TAG_Annotation
 #define TAG_CompositeCSU  1200
 
 // children: TAG_String
@@ -95,6 +97,11 @@
 //   TAG_Field
 //   TAG_Variable
 #define TAG_FunctionField  1220
+
+// children:
+//   TAG_Name
+//   TAG_Name
+#define TAG_Annotation  1222
 
 ///////////////////////////////
 // Variable

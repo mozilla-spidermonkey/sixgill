@@ -53,6 +53,18 @@ class TypeArray;
 class TypeCSU;
 class TypeFunction;
 
+struct Annotation
+{
+  String *annotationType;
+  String *value;
+
+  Annotation()
+    : annotationType(NULL), value(NULL) {}
+
+  Annotation(String *_annType, String *_annValue)
+    : annotationType(_annType), value(_annValue) {}
+};
+
 class Type : public HashObject
 {
  public:
@@ -70,7 +82,8 @@ class Type : public HashObject
   static TypeCSU*      MakeCSU(String *csu_name);
   static TypeFunction* MakeFunction(Type *return_type, TypeCSU *csu_type,
                                     bool varargs,
-                                    const Vector<Type*> &arguments);
+                                    const Vector<Type*> &arguments,
+                                    const Vector<Annotation> &annotations);
 
   // get the width to use when making pointer types. this should be made
   // a configurable option.
@@ -252,6 +265,18 @@ class TypeFunction : public Type
     return m_argument_types[argument];
   }
 
+  // get the annotations associated with this function.
+  size_t GetAnnotationCount() const {
+    return m_annotations ? m_annotations->Size() : 0;
+  }
+  const Annotation& GetAnnotation(size_t ind) const {
+    Assert(m_annotations);
+    return m_annotations->At(ind);
+  }
+
+  // add an annotation to this Function.
+  void AddAnnotation(String *annType, String *annValue);
+
   // inherited methods
   size_t Width() const;
   void Print(OutStream &out) const;
@@ -265,9 +290,10 @@ class TypeFunction : public Type
   bool m_varargs;
   Type **m_argument_types;
   size_t m_argument_count;
+  Vector<Annotation> *m_annotations;
 
   TypeFunction(Type *return_type, TypeCSU *csu_type, bool varargs,
-               const Vector<Type*> &arguments);
+               const Vector<Type*> &arguments, const Vector<Annotation> &annotations);
   friend class Type;
 };
 
@@ -389,6 +415,15 @@ class CompositeCSU : public HashObject
     return m_bases->At(ind);
   }
 
+  // get the annotations associated with this CSU.
+  size_t GetAnnotationCount() const {
+    return m_annotations ? m_annotations->Size() : 0;
+  }
+  const Annotation& GetAnnotation(size_t ind) const {
+    Assert(m_annotations);
+    return m_annotations->At(ind);
+  }
+
   // get the virtual instance function fields in this CSU.
   size_t GetFunctionFieldCount() const {
     return m_function_fields ? m_function_fields->Size() : 0;
@@ -420,6 +455,9 @@ class CompositeCSU : public HashObject
   // add a base class to this CSU.
   void AddBaseClass(String *base_class);
 
+  // add an annotation to this CSU.
+  void AddAnnotation(String *annType, String *annValue);
+
   // inherited methods
   void Print(OutStream &out) const;
   void MarkChildren() const;
@@ -439,6 +477,7 @@ class CompositeCSU : public HashObject
   Vector<DataField> *m_data_fields;
   Vector<FunctionField> *m_function_fields;
   Vector<BaseClass> *m_bases;
+  Vector<Annotation> *m_annotations;
 
   CompositeCSU(String *name);
   static HashCons<CompositeCSU> g_table;

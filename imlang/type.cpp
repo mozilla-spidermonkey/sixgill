@@ -153,6 +153,13 @@ void Type::Write(Buffer *buf, const Type *y)
         Type::Write(buf, ny->GetArgumentType(aind));
       WriteCloseTag(buf, TAG_TypeFunctionArguments);
     }
+    for (size_t ind = 0; ind < ny->GetAnnotationCount(); ind++) {
+      const Annotation &ff = ny->GetAnnotation(ind);
+      WriteOpenTag(buf, TAG_Annotation);
+      String::WriteWithTag(buf, ff.annotationType, TAG_Name);
+      String::WriteWithTag(buf, ff.value, TAG_Name);
+      WriteCloseTag(buf, TAG_Annotation);
+    }
     break;
   }
   default:
@@ -172,6 +179,7 @@ Type* Type::Read(Buffer *buf)
   Type *target_type = NULL;
   TypeCSU *csu_type = NULL;
   Vector<Type*> argument_types;
+  Vector<Annotation> annotations;
 
   Try(ReadOpenTag(buf, TAG_Type));
   while (!ReadCloseTag(buf, TAG_Type)) {
@@ -230,6 +238,16 @@ Type* Type::Read(Buffer *buf)
       }
       break;
     }
+    case TAG_Annotation: {
+      Try(kind == YK_Function);
+      Try(ReadOpenTag(buf, TAG_Annotation));
+      while (!ReadCloseTag(buf, TAG_Annotation)) {
+        String *annType = String::ReadWithTag(buf, TAG_Name);
+        String *value = String::ReadWithTag(buf, TAG_Name);
+        annotations.PushBack(Annotation(annType, value));
+      }
+      break;
+    }
     default:
       Try(false);
     }
@@ -255,7 +273,7 @@ Type* Type::Read(Buffer *buf)
     return MakeCSU(name);
   case YK_Function:
     Try(target_type);
-    return MakeFunction(target_type, csu_type, varargs, argument_types);
+    return MakeFunction(target_type, csu_type, varargs, argument_types, annotations);
   default:
     Try(false);
   }
@@ -298,8 +316,9 @@ TypeCSU* Type::MakeCSU(String *csu_name) {
 
 TypeFunction* Type::MakeFunction(Type *return_type, TypeCSU *csu_type,
                                  bool varargs,
-                                 const Vector<Type*> &arguments) {
-  TypeFunction xy(return_type, csu_type, varargs, arguments);
+                                 const Vector<Type*> &arguments,
+                                 const Vector<Annotation> &annotations) {
+  TypeFunction xy(return_type, csu_type, varargs, arguments, annotations);
   return (TypeFunction*) g_table.Lookup(xy);
 }
 
@@ -467,11 +486,13 @@ void TypeCSU::MarkChildren() const
 /////////////////////////////////////////////////////////////////////
 
 TypeFunction::TypeFunction(Type *return_type, TypeCSU *csu_type, bool varargs,
-                           const Vector<Type*> &argument_types)
+                           const Vector<Type*> &argument_types,
+                           const Vector<Annotation> &annotations)
   : Type(YK_Function),
     m_return_type(return_type), m_csu_type(csu_type), m_varargs(varargs),
     m_argument_types(argument_types.Data()),
-    m_argument_count(argument_types.Size())
+    m_argument_count(argument_types.Size()),
+    m_annotations(new Vector<Annotation>(annotations))
 {
   Assert(m_return_type);
   AssertArray(m_argument_types, m_argument_count);
@@ -514,6 +535,12 @@ void TypeFunction::MarkChildren() const
     m_csu_type->Mark();
   for (size_t aind = 0; aind < m_argument_count; aind++)
     m_argument_types[aind]->Mark();
+  if (m_annotations) {
+    for (size_t ind = 0; ind < m_annotations->Size(); ind++) {
+      m_annotations->At(ind).annotationType->Mark();
+      m_annotations->At(ind).value->Mark();
+    }
+  }
 }
 
 void TypeFunction::Persist()
@@ -533,6 +560,17 @@ void TypeFunction::UnPersist()
 {
   if (m_argument_types)
     delete[] m_argument_types;
+  if (m_annotations) {
+    delete m_annotations;
+    m_annotations = NULL;
+  }
+}
+
+void TypeFunction::AddAnnotation(String *annType, String *annValue)
+{
+  if (m_annotations == NULL)
+    m_annotations = new Vector<Annotation>();
+  m_annotations->PushBack(Annotation(annType, annValue));
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -611,6 +649,14 @@ void CompositeCSU::Write(Buffer *buf, const CompositeCSU *csu)
     // Type::Write(buf, ff.GetCSUType());
     String::Write(buf, ff.base);
     WriteCloseTag(buf, TAG_CSUBaseClass);
+  }
+
+  for (size_t ind = 0; ind < csu->GetAnnotationCount(); ind++) {
+    const Annotation &ff = csu->GetAnnotation(ind);
+    WriteOpenTag(buf, TAG_Annotation);
+    String::WriteWithTag(buf, ff.annotationType, TAG_Name);
+    String::WriteWithTag(buf, ff.value, TAG_Name);
+    WriteCloseTag(buf, TAG_Annotation);
   }
 
   WriteCloseTag(buf, TAG_CompositeCSU);
@@ -694,9 +740,20 @@ CompositeCSU* CompositeCSU::Read(Buffer *buf)
       if (PeekOpenTag(buf) == TAG_Variable)
         function = Variable::Read(buf);
       Try(ReadCloseTag(buf, TAG_FunctionField));
- 
+
       if (!drop_info)
         res->AddFunctionField(field, base, function);
+      break;
+    }
+    case TAG_Annotation: {
+      Try(res);
+      Try(ReadOpenTag(buf, TAG_Annotation));
+      String *annType = String::ReadWithTag(buf, TAG_Name);
+      String *value = String::ReadWithTag(buf, TAG_Name);
+      Try(ReadCloseTag(buf, TAG_Annotation));
+
+      if (!drop_info)
+        res->AddAnnotation(annType, value);
       break;
     }
     case TAG_CSUBaseClass: {
@@ -785,6 +842,13 @@ void CompositeCSU::AddBaseClass(String *base)
   m_bases->PushBack(BaseClass(base));
 }
 
+void CompositeCSU::AddAnnotation(String *annType, String *annValue)
+{
+  if (m_annotations == NULL)
+    m_annotations = new Vector<Annotation>();
+  m_annotations->PushBack(Annotation(annType, annValue));
+}
+
 void CompositeCSU::Print(OutStream &out) const
 {
   switch (m_kind) {
@@ -854,6 +918,13 @@ void CompositeCSU::MarkChildren() const
     for (size_t ind = 0; ind < m_bases->Size(); ind++)
       m_bases->At(ind).base->Mark();
   }
+
+  if (m_annotations) {
+    for (size_t ind = 0; ind < m_annotations->Size(); ind++) {
+      m_annotations->At(ind).annotationType->Mark();
+      m_annotations->At(ind).value->Mark();
+    }
+  }
 }
 
 void CompositeCSU::Persist()
@@ -876,6 +947,11 @@ void CompositeCSU::UnPersist()
   if (m_bases) {
     delete m_bases;
     m_bases = NULL;
+  }
+
+  if (m_annotations) {
+    delete m_annotations;
+    m_annotations = NULL;
   }
 }
 

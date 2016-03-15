@@ -364,6 +364,17 @@ bool Xdb::HasKey(Buffer *key)
   return GetKeyLayout(key, NULL, &layout);
 }
 
+uint32_t Xdb::LookupKey(Buffer *key)
+{
+  Assert(m_fd != -1 && !m_has_error);
+  Assert(key->base == key->pos);
+
+  XdbFile::StreamLayout layout;
+  if (!GetKeyLayout(key, NULL, &layout))
+      return 0;
+  return layout.id;
+}
+
 bool Xdb::Find(Buffer *key, Buffer *data)
 {
   Assert(m_fd != -1 && !m_has_error);

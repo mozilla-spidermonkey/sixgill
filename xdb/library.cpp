@@ -62,6 +62,14 @@ char* xdb_read_key(int stream)
   return strdup((const char *) key.base);
 }
 
+uint32_t xdb_lookup_key(const char *key)
+{
+  Assert(active_xdb);
+
+  Buffer bkey((const uint8_t*) key, strlen(key) + 1);
+  return active_xdb->LookupKey(&bkey);
+}
+
 char* xdb_read_entry(const char *key)
 {
   Assert(active_xdb);
