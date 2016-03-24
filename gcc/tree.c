@@ -2183,6 +2183,7 @@ void XIL_TranslateExpression(struct XIL_TreeEnv *env, tree node)
     return;
   }
 
+  case MUST_NOT_THROW_EXPR:
   case PREDICT_EXPR: {
     // evaluate the operand for side effects.
     tree value = TREE_OPERAND(node, 0);
@@ -2300,9 +2301,6 @@ void XIL_TranslateExpression(struct XIL_TreeEnv *env, tree node)
     XIL_ProcessResult(env, result);
     return;
   }
-
-  case MUST_NOT_THROW_EXPR:
-    return;
 
   default:
     TREE_UNEXPECTED_RESULT(env, node);
