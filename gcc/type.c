@@ -289,7 +289,7 @@ const char* XIL_CSUName(tree type, const char *name)
     // (it doesn't matter if we pick multiple names for this from typedefs),
     // otherwise use a default name.
     if (TYPE_NAME(type) && TREE_CODE(TYPE_NAME(type)) == TYPE_DECL)
-      return IDENTIFIER_POINTER(DECL_NAME(TYPE_NAME(type)));
+      return decl_as_string(TYPE_NAME(type), 0);
     return "__empty__";
   }
 
