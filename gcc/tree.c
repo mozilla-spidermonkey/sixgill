@@ -1131,6 +1131,12 @@ void XIL_TranslateStatement(struct XIL_TreeEnv *env, tree node)
   }
 
   case CLEANUP_STMT: {
+    // For some reason, gcc generates cleanup code in case an exception gets
+    // thrown even when -fno-exceptions is passed, which introduces invalid
+    // edges into the callgraph. Ignore them here.
+    if (!global_options.x_flag_exceptions && CLEANUP_EH_ONLY(node))
+      return;
+
     tree body = TREE_OPERAND(node, 0);
     tree cleanup = TREE_OPERAND(node, 1);
 
