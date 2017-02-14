@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# MANIFEST=$HOME/src/MI-GC MESSAGE="Test for automated sixgill uploading, delete at will" ./release.sh --disable-cvc3
-# MANIFEST=$HOME/src/MI-GC/js/src/devtools/rootAnalysis/build/sixgill-b2g.manifest MESSAGE="Test for b2g sixgill automation, delete at will" TARGET_CC=/builds/slave/testing/build/target_compiler/gcc/linux-x86/arm/arm-linux-androideabi-4.7/bin/arm-linux-androideabi-gcc ./release.sh
+# SRCDIR=$HOME/src/MI-GC MESSAGE="Test for automated sixgill uploading, delete at will" ./release.sh --disable-cvc3
+# SRCDIR=$HOME/src/MI-GC/js/src MESSAGE="Test for b2g sixgill automation, delete at will" TARGET_CC=/builds/slave/testing/build/target_compiler/gcc/linux-x86/arm/arm-linux-androideabi-4.7/bin/arm-linux-androideabi-gcc ./release.sh
 
 set -e
 
@@ -57,9 +57,9 @@ while [ "$#" -gt 0 ]; do
     DO_BUILD=
     DO_PACKAGE=
     DO_EMPLACE=
-  elif [ "$1" = "--manifest" ]; then
+  elif [ "$1" = "--srcdir" ]; then
     shift
-    MANIFEST="$1"
+    SRCDIR="$1"
     shift
   elif [ "$1" = "--message" ]; then
     shift
@@ -99,8 +99,7 @@ function build() {
 
 function run_test() {
   echo '------------ running tests ---------------'
-  PYTHON=/tools/python27/bin/python
-  [ -x "$PYTHON" ] || PYTHON=python
+  [ -x "$PYTHON" ] || PYTHON=python2.7
   ( cd test; $PYTHON run-test.py )
 }
 
@@ -141,30 +140,29 @@ function need_folder() {
   fi
 }
 
-function need_manifest() {
-  if [ -z "$MANIFEST" ]; then
-    echo -n "Enter manifest path (or path to gecko checkout root) "
-    read MANIFEST
+function need_srcdir() {
+  if [ -z "$SRCDIR" ]; then
+    echo -n "Enter path to gecko checkout root> "
+    read SRCDIR
   fi
-  if [ ! -f "$MANIFEST" ]; then
-    MANIFEST="$MANIFEST/js/src/devtools/rootAnalysis/build/sixgill.manifest"
-  fi
-  if [ ! -f "$MANIFEST" ]; then
-    echo "Invalid manifest" >&2
+  if [ ! -d "$SRCDIR" ]; then
+    echo "Invalid srcdir" >&2
     exit 1
   fi
 }
 
 function emplace() {
-  need_manifest
+  need_srcdir
   (
     cd $FOLDER
     [ -f manifest.tt ] && rm manifest.tt
     for f in *; do [[ $f = manifest.tt ]] || python $TOOLTOOL add "$f" --visibility public --unpack; done
   )
-  json $FOLDER/manifest.tt -e 'unshift {}' -e 'cd 0' -e "set hg_id \"$(hg id)\"" -e 'write /tmp/release.manifest.tmp'
-  cp /tmp/release.manifest.tmp "$MANIFEST"
-  ( cd $(dirname $MANIFEST) && hg diff $(basename $MANIFEST) )
+  local digest=$(json $FOLDER/manifest.tt -e 'cat --nokeys 0/digest')
+  local size=$(json $FOLDER/manifest.tt -e 'cat --nokeys 0/size')
+  for manifest in $SRCDIR/browser/config/tooltool-manifests/linux64/hazard.manifest $SRCDIR/b2g/dev/config/tooltool-manifests/linux64/hazard.manifest $SRCDIR/js/src/devtools/rootAnalysis/build/sixgill.manifest; do
+      json $manifest -e 'grep --cd sixgill.tar.xz */filename' -e "set digest=$digest" -e "set size=$size" -e "set hg_id \"$(hg id)\"" -e 'write --noindent'
+  done
 }
 
 function distribute() {
@@ -176,7 +174,7 @@ function distribute() {
 }
 
 [ -n "$DO_PACKAGE" ] || need_folder
-[ -n "$DO_EMPLACE" ] && need_manifest
+[ -n "$DO_EMPLACE" ] && need_srcdir
 [ -n "$DO_DISTRIBUTE" ] && need_message
 
 [ -n "$DO_BUILD" ] && build "$@"
