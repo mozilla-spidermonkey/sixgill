@@ -234,6 +234,12 @@ void XIL_TranslateConstant(struct XIL_TreeEnv *env, tree node)
   case PTRMEM_CST:
     TREE_BOGUS_RESULT(env);
 
+#ifdef HAVE_VOID_CST
+  // constant void.
+  case VOID_CST:
+    TREE_BOGUS_RESULT(env);
+#endif
+
   default:
     TREE_UNEXPECTED_RESULT(env, node);
   }
@@ -529,7 +535,7 @@ void XIL_TranslateUnary(struct XIL_TreeEnv *env, tree node)
 
   case NOP_EXPR: {
     // widening coercion or type cast. watch for coercions to supertypes.
-    tree type = TREE_TYPE(right); 
+    tree type = TREE_TYPE(right);
     tree super = TREE_TYPE(node);
 
     if (TREE_CODE(type) == POINTER_TYPE &&
@@ -2083,7 +2089,7 @@ void XIL_TranslateExpression(struct XIL_TreeEnv *env, tree node)
       }
       else {
         if (result_lval)
-          TREE_UNEXPECTED_RESULT(env, node);
+            TREE_BOGUS_RESULT(env);
 
         // operand 2 is the return value.
         tree result = TREE_OPERAND(node, 2);
