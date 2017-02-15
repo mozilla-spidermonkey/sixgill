@@ -318,7 +318,7 @@ build-libevent: libevent/Makefile
 	make -C libevent
 
 libevent/Makefile:
-	cd libevent && ./configure
+	cd libevent && CPPFLAGS='$(filter-out -Werror,${CPPFLAGS})' ./configure
 
 # Elsa frontend stuff
 
