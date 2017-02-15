@@ -1,5 +1,14 @@
 /* config.h.in.  Generated from configure.ac by autoheader.  */
 
+/* Whether the cc1plus binary links using C or mangled C++ linkage */
+#undef CC1PLUS_C_LINKAGE
+
+/* Beginning of extern section */
+#undef EXTERN_BEGIN
+
+/* End of extern section */
+#undef EXTERN_END
+
 /* Define if you want to use CVC3 */
 #undef HAVE_CVC3
 
@@ -15,11 +24,17 @@
 /* Define to 1 if you have the <memory.h> header file. */
 #undef HAVE_MEMORY_H
 
+/* Define to 1 if you have the <print-tree.h> header file. */
+#undef HAVE_PRINT_TREE_H
+
 /* Define to 1 if you have the <stdint.h> header file. */
 #undef HAVE_STDINT_H
 
 /* Define to 1 if you have the <stdlib.h> header file. */
 #undef HAVE_STDLIB_H
+
+/* Define to 1 if you have the <stringpool.h> header file. */
+#undef HAVE_STRINGPOOL_H
 
 /* Define to 1 if you have the <strings.h> header file. */
 #undef HAVE_STRINGS_H
@@ -59,3 +74,6 @@
 
 /* Define to 1 if you have the ANSI C header files. */
 #undef STDC_HEADERS
+
+/* Track all memory allocations */
+#undef USE_COUNT_ALLOCATOR

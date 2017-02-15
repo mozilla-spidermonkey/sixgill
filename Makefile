@@ -28,7 +28,7 @@ endif
 
 WARNINGS = -Wall -Wno-non-virtual-dtor -Wno-delete-non-virtual-dtor -Wno-strict-aliasing -Werror
 CPPFLAGS = -g ${OPT} -I${PWD} ${HOST_CFLAGS} ${WARNINGS}
-LDFLAGS = ${HOST_LDFLAGS} -lz -lgmp ${EXTRA_LDFLAGS}
+LDFLAGS = ${HOST_LDFLAGS} -lz -lgmp
 
 # run 'make profile' to enable profiling in generated binaries
 ifdef PROFILE
@@ -269,7 +269,7 @@ profile:
 
 bin/xdb.so: ${XDB_LIB_OBJS}
 	rm -f $@
-	${CXX} -shared -fPIC -o $@ ${XDB_LIB_OBJS} -lz ${EXTRA_LDFLAGS}
+	${CXX} -shared -fPIC -o $@ ${XDB_LIB_OBJS} ${LDFLAGS}
 
 bin/libxgill.a: ${LIB_OBJS}
 	rm -f $@

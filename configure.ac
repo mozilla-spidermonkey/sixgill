@@ -19,10 +19,22 @@ case "$host_os" in
     ;;
 esac
 
+dnl ***********************
+dnl gmp
+dnl ***********************
+AC_ARG_WITH([gmp],
+            [AS_HELP_STRING([--with-gmp=DIR],
+              [Use gmp from directory DIR])],
+            [GMP_DIR=$withval])
+if test "x$GMP_DIR" != "x" ; then
+     CPPFLAGS="$CPPFLAGS -I${GMP_DIR}/include"
+     HOST_LDFLAGS="-L${GMP_DIR}/lib $HOST_LDFLAGS"
+fi
+AC_CHECK_HEADERS( gmp.h, [], [AC_MSG_ERROR(GMP must be installed)] )
+
 AC_SUBST(HOST_LDFLAGS)
 
-dnl *** check for gmp/zlib ***
-AC_CHECK_HEADERS( gmp.h, [], [AC_MSG_ERROR(GMP must be installed)] )
+dnl *** check for zlib ***
 AC_CHECK_HEADERS( zlib.h, [], [AC_MSG_ERROR(Zlib must be installed)] )
 AC_LANG(C++)
 
