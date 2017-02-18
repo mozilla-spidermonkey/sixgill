@@ -173,12 +173,12 @@ function distribute() {
   echo "Uploaded contents of $FOLDER"
 }
 
-[ -n "$DO_PACKAGE" ] || need_folder
-[ -n "$DO_EMPLACE" ] && need_srcdir
-[ -n "$DO_DISTRIBUTE" ] && need_message
+if ! [[ -n "$DO_PACKAGE" ]]; then need_folder; fi
+if [[ -n "$DO_EMPLACE" ]]; then need_srcdir; fi
+if [[ -n "$DO_DISTRIBUTE" ]]; then need_message; fi
 
-[ -n "$DO_BUILD" ] && build "$@"
-[ -n "$DO_TEST" ] && run_test
-[ -n "$DO_PACKAGE" ] && package
-[ -n "$DO_EMPLACE" ] && emplace
-[ -n "$DO_DISTRIBUTE" ] && distribute
+if [[ -n "$DO_BUILD" ]]; then build "$@"; fi
+if [[ -n "$DO_TEST" ]]; then run_test; fi
+if [[ -n "$DO_PACKAGE" ]]; then package; fi
+if [[ -n "$DO_EMPLACE" ]]; then emplace; fi
+if [[ -n "$DO_DISTRIBUTE" ]]; then distribute; fi
