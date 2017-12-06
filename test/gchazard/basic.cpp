@@ -41,3 +41,8 @@ void indirect(Heap *h)
   callGC(true);
   (*pobj)->f = 0;
 }
+
+struct {
+    int x;
+    int xx;
+} nameless[] = { { 1, 1}, { 2, 2 } };

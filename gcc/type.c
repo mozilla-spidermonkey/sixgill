@@ -210,8 +210,16 @@ struct XIL_CString XIL_QualifiedName(tree decl)
     // structure nested in another structure declaration. use the outer
     // structure's name except when it is anonymous (nothing we can do for
     // these yet).
-    if (XIL_IsAnonymousCxx(TYPE_NAME(context)))
-      return name;
+    if (XIL_IsAnonymousCxx(TYPE_NAME(context))) {
+      const char* file = DECL_SOURCE_FILE(decl);
+      while (strchr(file, '/') != NULL)
+        file = strchr(file, '/') + 1;
+      struct XIL_CString full_name;
+      full_name.str = (char*) xmalloc(strlen(file) + strlen(name.str) + 2);
+      full_name.owned = true;
+      sprintf((char*) full_name.str, "%s:%s", file, name.str);
+      return full_name;
+    }
     context_name = XIL_QualifiedName(TYPE_NAME(context));
 
     // watch out for the inner decl in a record which contains the record
