@@ -332,6 +332,13 @@ const char* XIL_CSUName(tree type, const char *name)
   tree idnode = TYPE_NAME(type);
   if (c_dialect_cxx() && !*field_csu && idnode &&
       TREE_CODE(idnode) == TYPE_DECL && !XIL_IsAnonymousCxx(idnode)) {
+
+    // A lambda whose return type is or includes its own type will trigger
+    // infinite recursion here. So initialize to an unqualified name, which
+    // will prevent this code from executing if XIL_CSUName is called
+    // recursively. If it isn't, then it will be immediately overwritten.
+    *field_csu = XIL_TypeCSU(IDENTIFIER_POINTER(DECL_NAME(idnode)), NULL);
+
     struct XIL_CString name = XIL_QualifiedName(idnode);
     *field_csu = XIL_TypeCSU(name.str, NULL);
     XIL_ReleaseCString(&name);
