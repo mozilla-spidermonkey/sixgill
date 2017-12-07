@@ -433,8 +433,10 @@ XIL_Var generate_TranslateVar(tree decl)
 
   gcc_assert(xil_decl);
 
-  // this should be in the scope for the function we are processing.
-  gcc_assert(DECL_CONTEXT(decl) == xil_active_env.decl);
+  // this should be in the scope for the function we are processing. In rare
+  // instances, the context may not be filled in.
+  if (DECL_CONTEXT(decl))
+      gcc_assert(DECL_CONTEXT(decl) == xil_active_env.decl);
 
   XIL_Type xil_type = XIL_TranslateType(type);
 
