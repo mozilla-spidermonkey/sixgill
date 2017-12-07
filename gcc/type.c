@@ -94,7 +94,7 @@ XIL_Type XIL_TranslateArrayType(tree type)
         return XIL_TypePointer(xil_element_type, xil_pointer_width);
       }
 
-      if (!TYPE_UNSIGNED(maxval) && TREE_INT(maxval) == -1) {
+      if (!TYPE_UNSIGNED(maxval) && (int) TREE_INT(maxval) == -1) {
         // should be negative one, which shows up for arrays explicitly
         // declared to have zero elements.
         tree size = TYPE_SIZE(type);
