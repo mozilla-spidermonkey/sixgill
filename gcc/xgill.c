@@ -20,6 +20,7 @@
 
 EXTERN_BEGIN
 #include <plugin.h>
+#include <plugin-version.h>
 #include <target.h>
 #include <cp/cp-tree.h>
 
@@ -818,6 +819,12 @@ int plugin_is_GPL_compatible;
 int plugin_init (struct plugin_name_args *plugin_info,
                  struct plugin_gcc_version *version)
 {
+  if (!plugin_default_version_check(version, &gcc_version)) {
+      fprintf(stderr, "ERROR: xgill compiled with %s but running inside %s!\n",
+              version->basever, gcc_version.basever);
+      return 1;
+  }
+
   xil_plugin_path = plugin_info->full_name;
 
   // check the environment for the command used to invoke gcc. we can't pass
@@ -903,7 +910,7 @@ int plugin_init (struct plugin_name_args *plugin_info,
                      gcc_plugin_start_unit, NULL);
   register_callback (plugin_info->base_name, PLUGIN_ATTRIBUTES,
                      gcc_plugin_attributes, NULL);
-  register_callback (plugin_info->base_name, PLUGIN_PRE_GENERICIZE, 
+  register_callback (plugin_info->base_name, PLUGIN_PRE_GENERICIZE,
                      gcc_plugin_pre_genericize, NULL);
   register_callback (plugin_info->base_name, PLUGIN_FINISH_DECL,
                      gcc_plugin_finish_decl, NULL);
