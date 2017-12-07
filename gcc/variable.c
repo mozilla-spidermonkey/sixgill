@@ -119,7 +119,7 @@ struct XIL_CString XIL_GlobalName(tree decl)
     return name;
   if (strstr(name.str, "<error>"))
     return name;
-  if (strstr(name.str, "<lambda>"))
+  if (strstr(name.str, "<lambda"))
     return name;
   struct XIL_CString full_name = { NULL, false };
   const char *mangled = decl_as_string(DECL_ASSEMBLER_NAME(decl), TFF_DECL_SPECIFIERS);
