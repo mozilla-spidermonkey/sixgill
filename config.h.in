@@ -51,6 +51,9 @@
 /* Define to 1 if you have the <unistd.h> header file. */
 #undef HAVE_UNISTD_H
 
+/* gcc has VOID_CST enum */
+#undef HAVE_VOID_CST
+
 /* Define to 1 if you have the <zlib.h> header file. */
 #undef HAVE_ZLIB_H
 
