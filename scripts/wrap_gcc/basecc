@@ -49,10 +49,7 @@ if (!$gccdir) {
 die "Cannot find real gcc binaries" if ! $gccdir;
 
 if ($ccname !~ /(cc|\+\+)$/) {
-    open(TMP, ">>", "/tmp/basecc.log");
-    print TMP "FORWARDING non-compiler $ccname to $gccdir/$ccname @ARGV\n";
-    close TMP;
-
+    log_basecc("FORWARDING non-compiler $ccname to $gccdir/$ccname @ARGV");
     exec("$gccdir/$ccname", @ARGV)
         or die "exec $gccdir/$ccname failed: $!";
 }
@@ -170,10 +167,8 @@ chomp $cwd;
 # an argument to a gcc plugin (can't mix quotes, can't use '=').
 $ENV{'XGILL_COMMAND'} = "$cwd: $ccname $args";
 
-open(TMP, ">>", "/tmp/basecc.log");
-print TMP "args: $args\n";
-print TMP "M/MD/E=$have_M/$have_MD/$have_E has_input: $has_input\n";
-close TMP;
+log_basecc("args: $args");
+log_basecc("M/MD/E=$have_M/$have_MD/$have_E has_input: $has_input");
 
 if ($logfile ne "") {
     open(OUT,">> $logfile");
@@ -191,14 +186,13 @@ if (!$has_input) {
 }
 
 # run the command we were asked to do, with the plugin arguments.
-open(TMP, ">>", "/tmp/basecc.log");
-print TMP "RUNNING $gccdir/$ccname $xgillargs $args\n";
-close TMP;
+log_basecc("RUNNING $gccdir/$ccname $xgillargs $args");
 
 $code = system("$gccdir/$ccname $xgillargs $args") / 256;
 
 if ($code == 0) {
     # get the source and preprocessed code.
+    log_basecc("GRABBING SOURCE: $gccdir/$ccname $ppargs | $xsource $sourceargs");
     $code = system("$gccdir/$ccname $ppargs | $xsource $sourceargs") / 256;
     if ($code ne 0) {
         open(OUT,">> $logfile");
@@ -222,3 +216,9 @@ else {
 }
 
 exit($code);
+
+sub log_basecc {
+    open(TMP, ">>", "/tmp/basecc.log");
+    print TMP $_[0], "\n";
+    close TMP;
+}
