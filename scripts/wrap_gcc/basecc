@@ -146,7 +146,7 @@ while (my $arg = shift) {
 	    next;
 	}
 
-	if ($arg =~ /^-MF$/) {
+	if ($arg =~ /^-M[FTQ]$/) {
 	    # Not generating dependencies when preprocessing. Need to
 	    # discard following argument for the preprocessor (only).
 	    $args .= " '" . shift() . "'";
