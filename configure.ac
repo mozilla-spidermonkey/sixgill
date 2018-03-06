@@ -158,10 +158,16 @@ AC_CHECK_HEADERS([print-tree.h stringpool.h],,,[
 #include <gcc-plugin.h>
 #include <vec.h>
 ])
+AC_MSG_CHECKING(VOID_CST enum)
 AC_COMPILE_IFELSE([AC_LANG_SOURCE([
-#include <tree-base.h>
+#include <gcc-plugin.h>
 int test = VOID_CST;
-])],AC_DEFINE([HAVE_VOID_CST],[1], [gcc has VOID_CST enum]))
+])],
+  AC_MSG_RESULT(yes)
+  AC_DEFINE([HAVE_VOID_CST],[1], [gcc has VOID_CST enum], )
+,
+  AC_MSG_RESULT(no)
+)
 
 dnl ***********************
 dnl Results
