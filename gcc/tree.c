@@ -2088,9 +2088,6 @@ void XIL_TranslateExpression(struct XIL_TreeEnv *env, tree node)
         arg_start = 2;
       }
       else {
-        if (result_lval)
-            TREE_BOGUS_RESULT(env);
-
         // operand 2 is the return value.
         tree result = TREE_OPERAND(node, 2);
 
@@ -2103,6 +2100,8 @@ void XIL_TranslateExpression(struct XIL_TreeEnv *env, tree node)
             (bool*) XIL_Associate(XIL_AscBlock, "TargetResult", result);
           if (*temp_result) TREE_UNEXPECTED_RESULT(env, node);
           *temp_result = true;
+          if (result_lval)
+            TREE_BOGUS_RESULT(env);
           result_lval = (*temp_env)->result_assign;
         }
         else {
