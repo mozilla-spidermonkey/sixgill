@@ -17,10 +17,10 @@ DO_PACKAGE=1
 DO_EMPLACE=1
 DO_DISTRIBUTE=1
 while [ "$#" -gt 0 ]; do
-  if [ "$1" = "--noclean" ]; then
+  if [ "$1" = "--no-clean" ]; then
     shift
     DO_CLEAN=
-  elif [ "$1" = "--nobuild" ]; then
+  elif [ "$1" = "--no-build" ]; then
     shift
     DO_CLEAN=
     DO_BUILD=
@@ -51,6 +51,9 @@ while [ "$#" -gt 0 ]; do
     DO_BUILD=
     DO_PACKAGE=
     shift
+  elif [ "$1" = "--no-distribute" ]; then
+    shift
+    DO_DISTRIBUTE=
   elif [ "$1" = "--distribute" ]; then
     shift
     DO_CLEAN=
