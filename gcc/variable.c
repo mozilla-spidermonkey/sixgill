@@ -43,6 +43,16 @@ bool XIL_IsDestructor(tree decl)
 }
 
 static struct XIL_CString
+ColonPrefix(const char* prefix, const char* suffix)
+{
+    struct XIL_CString str = { NULL, false };
+    str.str = (char*) xmalloc(strlen(prefix) + 1 + strlen(suffix) + 1);
+    str.owned = true;
+    sprintf((char*) str.str, "%s:%s", prefix, suffix);
+    return str;
+}
+
+static struct XIL_CString
 GlobalName(tree decl)
 {
   struct XIL_CString full_name = { NULL, false };
@@ -86,9 +96,7 @@ GlobalName(tree decl)
   tree context = DECL_CONTEXT(decl);
   if (context && TREE_CODE(context) == FUNCTION_DECL) {
     struct XIL_CString func_name = XIL_GlobalName(context);
-    full_name.str = (char*) xmalloc(strlen(func_name.str) + strlen(name) + 2);
-    full_name.owned = true;
-    sprintf((char*) full_name.str, "%s:%s", func_name.str, name);
+    full_name = ColonPrefix(func_name.str, name);
     XIL_ReleaseCString(&func_name);
     return full_name;
   }
@@ -102,10 +110,7 @@ GlobalName(tree decl)
     while (strchr(file, '/') != NULL)
       file = strchr(file, '/') + 1;
 
-    full_name.str = (char*) xmalloc(strlen(file) + strlen(name) + 2);
-    full_name.owned = true;
-    sprintf((char*) full_name.str, "%s:%s", file, name);
-    return full_name;
+    return ColonPrefix(file, name);
   }
 
   full_name.str = name;
@@ -365,11 +370,7 @@ XIL_Var generate_TranslateVar(tree decl)
       else {
         // use 'function:name' since the structure's name must be
         // globally unique.
-        anon_name.str = (char*) xmalloc(strlen(xil_active_env.decl_name) +
-                                        strlen(full_name.str) + 2);
-        anon_name.owned = true;
-        sprintf((char*) anon_name.str, "%s:%s",
-                xil_active_env.decl_name, full_name.str);
+        anon_name = ColonPrefix(xil_active_env.decl_name, full_name.str);
       }
 
       XIL_CSUName(type, anon_name.str);
