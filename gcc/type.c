@@ -297,7 +297,7 @@ const char* XIL_CSUName(tree type, const char *name)
     // (it doesn't matter if we pick multiple names for this from typedefs),
     // otherwise use a default name.
     if (TYPE_NAME(type) && TREE_CODE(TYPE_NAME(type)) == TYPE_DECL)
-      return decl_as_string(TYPE_NAME(type), TFF_CLASS_KEY_OR_ENUM | TFF_CHASE_TYPEDEF);
+      return decl_as_string(TYPE_NAME(type), TFF_CHASE_TYPEDEF);
     return "__empty__";
   }
 
@@ -320,7 +320,7 @@ const char* XIL_CSUName(tree type, const char *name)
 
   // template instantiations do not have names filled in. get one now.
   if (c_dialect_cxx() && !*field_csu && CLASS_TYPE_P(type) && CLASSTYPE_USE_TEMPLATE(type)) {
-    const char *new_name = type_as_string(type, TFF_CLASS_KEY_OR_ENUM | TFF_CHASE_TYPEDEF);
+    const char *new_name = type_as_string(type, TFF_CHASE_TYPEDEF);
     *field_csu = XIL_TypeCSU(new_name, NULL);
   }
 
@@ -565,7 +565,7 @@ XIL_Type XIL_TranslateRecordType(tree type)
 
     if (!name) {
       if (c_dialect_cxx())
-        name = type_as_string(type, TFF_CLASS_KEY_OR_ENUM | TFF_CHASE_TYPEDEF);
+        name = type_as_string(type, TFF_CHASE_TYPEDEF);
       else
         name = "<unknown-type>";
     }
