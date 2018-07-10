@@ -104,7 +104,9 @@ GlobalName(tree decl)
   // the variable has the 'static' keyword if it is not TREE_PUBLIC.
   // (TREE_STATIC only implies the decl has static non-stack storage, not that
   // it was declared with 'static').
-  if (!TREE_PUBLIC(decl)) {
+  //
+  // As a special case, always file-prefix main().
+  if (!TREE_PUBLIC(decl) || strcmp(name, "main") == 0) {
     // get the filename (excluding directories) of the source file.
     const char *file = DECL_SOURCE_FILE(decl);
     while (strchr(file, '/') != NULL)
