@@ -1,4 +1,4 @@
-#define ANNOTATE(tagname) __attribute__((tag(tagname)))
+#define ANNOTATE(tagname) __attribute__((annotate(tagname)))
 
 namespace js {
 namespace gc {

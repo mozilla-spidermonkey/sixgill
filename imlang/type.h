@@ -63,6 +63,8 @@ struct Annotation
 
   Annotation(String *_annType, String *_annValue)
     : annotationType(_annType), value(_annValue) {}
+
+  uint32_t Hash() const;
 };
 
 class Type : public HashObject

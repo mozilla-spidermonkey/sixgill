@@ -24,6 +24,11 @@ NAMESPACE_XGILL_BEGIN
 // define to print the fully decorated names of program fields.
 // #define FIELD_PRINT_DECORATED
 
+uint32_t Annotation::Hash() const
+{
+  return annotationType->Hash() ^ value->Hash();
+}
+
 /////////////////////////////////////////////////////////////////////
 // Type static
 /////////////////////////////////////////////////////////////////////
@@ -76,6 +81,14 @@ int Type::Compare(const Type *y0, const Type *y1)
       Type *arg0 = ny0->GetArgumentType(aind);
       Type *arg1 = ny1->GetArgumentType(aind);
       TryCompareObjects(arg0, arg1, Type);
+    }
+    TryCompareValues(ny0->GetAnnotationCount(), ny1->GetAnnotationCount());
+    for (size_t anind = 0; anind < ny0->GetAnnotationCount(); anind++) {
+      const Annotation& ann0 = ny0->GetAnnotation(anind);
+      const Annotation& ann1 = ny1->GetAnnotation(anind);
+      TryCompareValues(ann0.Hash(), ann1.Hash());
+      TryCompareObjects(ann0.annotationType, ann1.annotationType, String);
+      TryCompareObjects(ann0.value, ann1.value, String);
     }
     break;
   }

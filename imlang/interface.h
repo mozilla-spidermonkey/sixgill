@@ -96,7 +96,7 @@ void XIL_ClearAssociate(XIL_AssociateKind table);
   MACRO(Assert, "assert_static", 7)                             \
   MACRO(Assume, "assume_static", 8)                             \
   MACRO(AssertRuntime, "assert_static_runtime", 9)              \
-  MACRO(Tag, "tag", 10)
+  MACRO(Annotate, "annotate", 10)
 
 enum _enum_XIL_AnnotationKind {
 #define XIL_FILL_ANNOT(NAME, _, VALUE)  XIL_AK_ ## NAME = VALUE,
