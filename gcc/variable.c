@@ -27,6 +27,10 @@ bool XIL_IsDestructor(tree decl)
   if (!c_dialect_cxx())
     return false;
 
+  // Destructors are methods.
+  if (TREE_CODE(TREE_TYPE(decl)) != METHOD_TYPE)
+      return false;
+
   // somewhat crude, look for functions whose full name includes a '::~'
   if (TREE_CODE(decl) != FUNCTION_DECL)
     return false;

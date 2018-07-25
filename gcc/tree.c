@@ -581,6 +581,7 @@ void XIL_TranslateUnary(struct XIL_TreeEnv *env, tree node)
 
   switch (TREE_CODE(node)) {
 
+  case UNARY_PLUS_EXPR:
   case CONVERT_EXPR:  unop = XIL_U_Coerce; break;
   case NEGATE_EXPR:   unop = XIL_U_Neg; break;
   case BIT_NOT_EXPR:  unop = XIL_U_BitwiseNot; break;
