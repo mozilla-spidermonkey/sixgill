@@ -184,6 +184,10 @@ const char* XIL_DecodeAttribute(tree attr,
 {
   tree purpose = TREE_PURPOSE(attr);
   if (!purpose || TREE_CODE(purpose) != IDENTIFIER_NODE) {
+    // All of our attributes so far are simple strings. Attributes with multiple args
+    // will show up here.
+    if (TREE_CODE(purpose) == TREE_LIST)
+      return NULL;
     TREE_UNEXPECTED(attr);
     return NULL;
   }

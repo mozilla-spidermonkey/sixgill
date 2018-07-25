@@ -811,6 +811,10 @@ XIL_Type generate_TranslateType(tree type)
     TREE_BOGUS();
     return XIL_TypeError();
 
+  case TYPE_PACK_EXPANSION:
+    TREE_BOGUS();
+    return XIL_TypeError();
+
   default:
     TREE_UNEXPECTED(type);
     return XIL_TypeError();
