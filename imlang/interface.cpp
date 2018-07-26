@@ -455,9 +455,46 @@ extern "C" XIL_Type XIL_TypeCSU(const char *csu_name, int *generate)
   return (XIL_Type) Type::MakeCSU(new_csu_name);
 }
 
+struct _struct_XIL_AnnotationList {
+    String *ann_type;
+    String *ann_value;
+    _struct_XIL_AnnotationList *next;
+
+    _struct_XIL_AnnotationList(String *type, String *value, _struct_XIL_AnnotationList *list)
+      : ann_type(type), ann_value(value), next(list)
+    {}
+};
+
+extern "C"
+XIL_AnnotationList XIL_MakeAnnotationList()
+{
+    return nullptr;
+}
+
+extern "C"
+XIL_AnnotationList XIL_PrependAnnotation(XIL_AnnotationList list,
+                                         const char *ann_type,
+                                         const char* ann_value)
+{
+    String *new_ann_type = String::Make(ann_type);
+    String *new_ann_value = String::Make(ann_value);
+    return new _struct_XIL_AnnotationList(new_ann_type, new_ann_value, list);
+}
+
+extern "C"
+void XIL_ReleaseAnnotationList(XIL_AnnotationList list)
+{
+    while (list) {
+        XIL_AnnotationList next = list->next;
+        delete list;
+        list = next;
+    }
+}
+
 extern "C"
 XIL_Type XIL_TypeFunction(XIL_Type return_type, const char *this_csu,
-                          int varargs, XIL_Type *arg_types, int arg_count)
+                          int varargs, XIL_Type *arg_types, int arg_count,
+                          XIL_AnnotationList list)
 {
   GET_OBJECT(Type, return_type);
 
@@ -470,10 +507,15 @@ XIL_Type XIL_TypeFunction(XIL_Type return_type, const char *this_csu,
     new_arg_types.PushBack(arg_type);
   }
 
-  Vector<Annotation> no_annotations;
+  Vector<Annotation> annotations;
+  while (list) {
+      annotations.PushBack(Annotation(list->ann_type, list->ann_value));
+      list = list->next;
+  }
+
   return (XIL_Type)
     Type::MakeFunction(new_return_type, csu_type,
-                       (bool) varargs, new_arg_types, no_annotations);
+                       (bool) varargs, new_arg_types, annotations);
 }
 
 const char* XIL_GetTypeCSUName(XIL_Type csu_type)
@@ -487,18 +529,25 @@ const char* XIL_GetTypeCSUName(XIL_Type csu_type)
 
 extern "C"
 XIL_Field XIL_MakeField(const char *name, const char *source_name,
-                        const char *csu_name, XIL_Type type, int is_func)
+                        const char *csu_name, XIL_Type type, int is_func,
+                        XIL_AnnotationList list)
 {
   String *new_name = String::Make(name);
   String *new_source_name = source_name ? String::Make(source_name) : NULL;
   String *new_csu_name = String::Make(csu_name);
   TypeCSU *csu_type = Type::MakeCSU(new_csu_name);
 
+  Vector<Annotation> annotations;
+  while (list) {
+      annotations.PushBack(Annotation(list->ann_type, list->ann_value));
+      list = list->next;
+  }
+
   GET_OBJECT(Type, type);
 
   return (XIL_Field)
     Field::Make(new_name, new_source_name, csu_type,
-                new_type, (bool) is_func);
+                new_type, (bool) is_func, &annotations);
 }
 
 extern "C" void XIL_PushActiveCSU(const char *name)
@@ -564,7 +613,7 @@ extern "C" void XIL_CSUAddDataField(XIL_Field field, int offset)
   CompositeCSU *csu = g_active_csus.Back();
 
   GET_OBJECT(Field, field);
-  csu->AddField(new_field, (size_t) offset);
+  csu->AddDataField(new_field, (size_t) offset);
 }
 
 extern "C" void XIL_CSUAddFunctionField(XIL_Field field, XIL_Field base,
@@ -588,15 +637,6 @@ extern "C" void XIL_CSUAddAnnotation(const char *annType, const char *value)
 {
   CompositeCSU *csu = g_active_csus.Back();
   csu->AddAnnotation(String::Make(annType), String::Make(value));
-}
-
-extern "C" void XIL_FunctionAddAnnotation(const char *annType, const char *value,
-                                          XIL_Var func)
-{
-  GET_OBJECT(Variable, func);
-  TypeFunction *ntype = (TypeFunction*) new_func->GetType();
-  Assert(ntype);
-  ntype->AddAnnotation(String::Make(annType), String::Make(value));
 }
 
 extern "C" const char * XIL_MaybeDecorateFunction(const char *name, XIL_Type type)

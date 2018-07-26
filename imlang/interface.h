@@ -35,6 +35,7 @@ typedef struct _struct_XIL_Field* XIL_Field;
 typedef struct _struct_XIL_Var* XIL_Var;
 typedef struct _struct_XIL_Exp* XIL_Exp;
 typedef int XIL_PPoint;
+typedef struct _struct_XIL_AnnotationList* XIL_AnnotationList;
 
 /////////////////////////////////////////////////////////////////////
 // Utility
@@ -146,13 +147,23 @@ XIL_Type XIL_TypePointer(XIL_Type target_type, int width);
 XIL_Type XIL_TypeArray(XIL_Type element_type, int count);
 XIL_Type XIL_TypeCSU(const char *csu_name, int *generate);
 XIL_Type XIL_TypeFunction(XIL_Type return_type, const char *this_csu,
-                          int varargs, XIL_Type *arg_types, int arg_count);
+                          int varargs, XIL_Type *arg_types, int arg_count,
+                          XIL_AnnotationList annotations);
 
 // get the name associated with a CSU type, or NULL for non-CSU types.
 const char* XIL_GetTypeCSUName(XIL_Type csu_type);
 
+XIL_AnnotationList XIL_MakeAnnotationList();
+
+void XIL_ReleaseAnnotationList(XIL_AnnotationList list);
+
+XIL_AnnotationList XIL_PrependAnnotation(XIL_AnnotationList list,
+                                         const char *annType,
+                                         const char* annValue);
+
 XIL_Field XIL_MakeField(const char *name, const char *source_name,
-                        const char *csu_name, XIL_Type type, int is_func);
+                        const char *csu_name, XIL_Type type, int is_func,
+                        XIL_AnnotationList annotations);
 
 // push/pop the CSU type we are adding information about. adds are to the
 // CSU at the top of the stack.
@@ -173,8 +184,6 @@ void XIL_CSUAddDataField(XIL_Field field, int offset);
 void XIL_CSUAddFunctionField(XIL_Field field, XIL_Field base, XIL_Var func);
 void XIL_CSUAddBase(const char *base);
 void XIL_CSUAddAnnotation(const char *annType, const char *value);
-
-void XIL_FunctionAddAnnotation(const char *annType, const char *value, XIL_Var func);
 
 const char * XIL_MaybeDecorateFunction(const char *name, XIL_Type type);
 

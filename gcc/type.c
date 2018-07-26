@@ -463,8 +463,12 @@ struct XIL_VirtualFunction* XIL_GetFunctionFields(tree type)
       // there is already an entry for it.
       bool excluded = false;
       for (virt = *pvirt; virt; virt = virt->next) {
-        if (method == virt->decl)
+        if (method == virt->decl) {
           excluded = true;
+          // Replace the field in the entry with the overridden method's field
+          // (it will be the same as the base, except for the attributes.)
+          virt->field = XIL_TranslateField(method);
+        }
       }
       if (excluded) {
         node = OVL_NEXT(node);
@@ -519,18 +523,6 @@ void XIL_AddDataFields(tree type)
     if (DECL_VIRTUAL_P(decl)) {
       decl = TREE_CHAIN(decl);
       continue;
-    }
-
-    // mark any annotation attributes on the field as needing processing once
-    // we are done with the block.
-    tree attr = DECL_ATTRIBUTES(decl);
-    while (attr) {
-      struct XIL_PendingAnnotation *pending = (struct XIL_PendingAnnotation*) xcalloc(1, sizeof(struct XIL_PendingAnnotation));
-      pending->type = type;
-      pending->attr = attr;
-      pending->next = xil_active_env.annots;
-      xil_active_env.annots = pending;
-      attr = TREE_CHAIN(attr);
     }
 
     // compute the byte offset of the field into the structure.
@@ -755,7 +747,22 @@ XIL_Type XIL_TranslateFunctionType(tree type)
     arg_array[arg_count++] = xil_arg_type;
   }
 
-  return XIL_TypeFunction(xil_return_type, this_csu, 0, arg_array, arg_count);
+  XIL_AnnotationList annotations = XIL_MakeAnnotationList();
+  while (xil_active_env.annots) {
+    struct XIL_PendingAnnotation *annot = xil_active_env.annots;
+    xil_active_env.annots = annot->next;
+
+    gcc_assert(annot->type == type);
+
+    const char *annot_text = NULL;
+    const char *purpose = XIL_DecodeAttribute(annot->attr, &annot_text, NULL);
+    if (purpose)
+        annotations = XIL_PrependAnnotation(annotations, purpose, annot_text);
+
+    free(annot);
+  }
+
+  return XIL_TypeFunction(xil_return_type, this_csu, 0, arg_array, arg_count, annotations);
 }
 
 XIL_Type generate_TranslateType(tree type)
@@ -825,7 +832,7 @@ XIL_Field generate_TranslateField(tree decl)
 {
   static XIL_Field error_field = NULL;
   if (!error_field)
-    error_field = XIL_MakeField("error", "error", "error", XIL_TypeError(), 0);
+    error_field = XIL_MakeField("error", "error", "error", XIL_TypeError(), 0, NULL);
 
   bool is_func;
   if (TREE_CODE(decl) == FIELD_DECL)
@@ -894,8 +901,24 @@ XIL_Field generate_TranslateField(tree decl)
     free(anon_name);
   }
 
+  // add any annotation attributes on the field to the field.
+  XIL_AnnotationList annotations = XIL_MakeAnnotationList();
+  tree attr = DECL_ATTRIBUTES(decl);
+  while (attr) {
+      const char *name = NULL;
+      const char *purpose = XIL_DecodeAttribute(attr, &name, NULL);
+
+      if (purpose && name)
+          annotations = XIL_PrependAnnotation(annotations, purpose, name);
+
+      attr = TREE_CHAIN(attr);
+  }
+
   XIL_Type xil_type = XIL_TranslateType(type);
-  XIL_Field field = XIL_MakeField(name.str, name.str, csu_name, xil_type, is_func);
+  XIL_Field field = XIL_MakeField(name.str, name.str, csu_name, xil_type, is_func, annotations);
+
+  XIL_ReleaseAnnotationList(annotations);
   XIL_ReleaseCString(&name);
+
   return field;
 }

@@ -250,6 +250,19 @@ void XIL_GenerateBlock(tree decl)
   }
 
   tree type = TREE_TYPE(decl);
+
+  // Process any attributes, queuing them up as pending attributes for any
+  // function type that will be created in XIL_TranslateType.
+  tree attr = DECL_ATTRIBUTES(decl);
+  while (attr) {
+    struct XIL_PendingAnnotation *pending = (struct XIL_PendingAnnotation*) xcalloc(1, sizeof(struct XIL_PendingAnnotation));
+    pending->type = type;
+    pending->attr = attr;
+    pending->next = xil_active_env.annots;
+    xil_active_env.annots = pending;
+    attr = TREE_CHAIN(attr);
+  }
+
   XIL_Type xil_type = XIL_TranslateType(type);
 
   // fixup the type for destructors. these have an __in_chrg argument that
@@ -259,7 +272,8 @@ void XIL_GenerateBlock(tree decl)
       tree base_type = TYPE_METHOD_BASETYPE(type);
       XIL_Type xil_base_type = XIL_TranslateType(base_type);
       const char *this_csu = XIL_GetTypeCSUName(xil_base_type);
-      xil_type = XIL_TypeFunction(XIL_TypeVoid(), this_csu, false, NULL, 0);
+      XIL_AnnotationList no_annotations = XIL_MakeAnnotationList();
+      xil_type = XIL_TypeFunction(XIL_TypeVoid(), this_csu, false, NULL, 0, no_annotations);
     }
     else {
       TREE_UNEXPECTED(decl);
@@ -414,6 +428,7 @@ void XIL_GenerateBlock(tree decl)
     struct XIL_PendingAnnotation *annot = xil_active_env.annots;
     xil_active_env.annots = annot->next;
     XIL_ProcessAnnotationAttr(annot->type, annot->attr, NULL, NULL);
+    free(annot);
   }
 
   XIL_ClearActiveBlock(xil_active_env.dropped);
@@ -654,13 +669,6 @@ void gcc_plugin_pre_genericize(void *gcc_data, void *user_data)
   // annotations.
   if (!xil_has_annotation)
     XIL_GenerateBlock(decl);
-
-  // check for annotations on this function.
-  tree attr = DECL_ATTRIBUTES(decl);
-  while (attr) {
-    XIL_ProcessAnnotationAttr(decl, attr, NULL, NULL);
-    attr = TREE_CHAIN(attr);
-  }
 
   // Using traditional-style annotations that generate temporary files and call
   // a subcompiler on them. These need the annotations to exist at the time of

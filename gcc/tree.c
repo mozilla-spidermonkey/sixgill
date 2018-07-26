@@ -284,7 +284,7 @@ void XIL_TranslateDeclaration(struct XIL_TreeEnv *env, tree node)
       gcc_assert(csu_name);
 
       XIL_Type xil_type = XIL_TranslateType(TREE_TYPE(node));
-      XIL_Field field = XIL_MakeField(name, name, csu_name, xil_type, false);
+      XIL_Field field = XIL_MakeField(name, name, csu_name, xil_type, false, NULL);
 
       XIL_Exp this_fld = XIL_ExpFld(this_drf, field);
       XIL_Exp result = XIL_ExpDrf(this_fld);
@@ -900,8 +900,9 @@ void XIL_TranslateStatement(struct XIL_TreeEnv *env, tree node)
         XIL_Type void_type = XIL_TypeVoid();
         XIL_Type void_ptr = XIL_TypePointer(void_type, xil_pointer_width);
         XIL_Type size_type = XIL_TypeInt(xil_pointer_width, 0);
+        XIL_AnnotationList no_annotations = XIL_MakeAnnotationList();
         XIL_Type alloca_type =
-          XIL_TypeFunction(void_ptr, NULL, 0, &size_type, 1);
+          XIL_TypeFunction(void_ptr, NULL, 0, &size_type, 1, no_annotations);
 
         XIL_Var alloca_func = XIL_VarFunc("__xil_alloca", "__xil_alloca");
         XIL_Exp alloca_exp = XIL_ExpVar(alloca_func);
@@ -1452,7 +1453,7 @@ static XIL_Field XIL_GetVTableField(tree type, tree node)
 {
   static XIL_Field error_field = NULL;
   if (!error_field)
-    error_field = XIL_MakeField("error", "error", "error", XIL_TypeError(), 0);
+    error_field = XIL_MakeField("error", "error", "error", XIL_TypeError(), 0, NULL);
 
   TREE_CHECK(node, OBJ_TYPE_REF);
 
@@ -2213,7 +2214,8 @@ void XIL_TranslateExpression(struct XIL_TreeEnv *env, tree node)
     tree type = TREE_TYPE(node);
     XIL_Type xil_type = XIL_TranslateType(type);
     XIL_Type arg_type = XIL_TypePointer(XIL_TypeVoid(), xil_pointer_width);
-    XIL_Type func_type = XIL_TypeFunction(xil_type, NULL, false, &arg_type, 1);
+    XIL_AnnotationList no_annotations = XIL_MakeAnnotationList();
+    XIL_Type func_type = XIL_TypeFunction(xil_type, NULL, false, &arg_type, 1, no_annotations);
 
     XIL_Exp xil_list = NULL;
     MAKE_ENV(list_env, env->point, NULL);

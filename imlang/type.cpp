@@ -29,6 +29,21 @@ uint32_t Annotation::Hash() const
   return annotationType->Hash() ^ value->Hash();
 }
 
+void Annotation::Print(OutStream &out) const
+{
+    out << "[[" << annotationType->Value() << "(" << value << ")]]";
+}
+
+static void PrintAnnotations(OutStream &out, Vector<Annotation> *annotations)
+{
+  if (annotations) {
+    for (size_t ind = 0; ind < annotations->Size(); ind++) {
+      out << ' ';
+      annotations->At(ind).Print(out);
+    }
+  }
+}
+
 template <typename T>
 void
 UnPersistField(T**& field)
@@ -75,7 +90,7 @@ int Type::Compare(const Type *y0, const Type *y1)
     TryCompareObjects(ny0->GetTargetType(), ny1->GetTargetType(), Type);
     break;
   }
-  case YK_Array: { 
+  case YK_Array: {
     const TypeArray *ny0 = (const TypeArray*)y0;
     const TypeArray *ny1 = (const TypeArray*)y1;
     TryCompareObjects(ny0->GetElementType(), ny1->GetElementType(), Type);
@@ -557,6 +572,7 @@ void TypeFunction::Print(OutStream &out) const
   if (m_varargs)
     out << ",...";
   out << ")";
+  PrintAnnotations(out, m_annotations);
 }
 
 void TypeFunction::MarkChildren() const
@@ -753,7 +769,7 @@ CompositeCSU* CompositeCSU::Read(Buffer *buf)
       Try(ReadCloseTag(buf, TAG_DataField));
 
       if (!drop_info)
-        res->AddField(field, offset);
+        res->AddDataField(field, offset);
       break;
     }
     case TAG_FunctionField: {
@@ -847,7 +863,7 @@ void CompositeCSU::SetEndLocation(Location *loc)
   m_end_location = loc;
 }
 
-void CompositeCSU::AddField(Field *field, size_t offset)
+void CompositeCSU::AddDataField(Field *field, size_t offset)
 {
   if (m_data_fields == NULL)
     m_data_fields = new Vector<DataField>();
@@ -898,17 +914,31 @@ void CompositeCSU::Print(OutStream &out) const
   for (size_t ind = 0; ind < GetFieldCount(); ind++) {
     const DataField &df = GetField(ind);
     out << "field: " << df.offset << " "
-        << df.field->GetName()->Value() << " " << df.field->GetType() << endl;
+        << df.field->GetName()->Value() << " " << df.field->GetType();
+    PrintAnnotations(out, df.field->GetAnnotations());
+    out << endl;
   }
 
   for (size_t ind = 0; ind < GetFunctionFieldCount(); ind++) {
     const FunctionField &ff = GetFunctionField(ind);
     out << "function: " << ff.field;
     if (ff.base)
-      out << " from " << ff.base;
+      out << " from " << ff.base << " : " << ff.base->GetType();
     if (ff.function)
       out << " " << ff.function->GetName();
+    PrintAnnotations(out, ff.field->GetAnnotations());
     out << endl;
+  }
+}
+
+static void
+MarkAnnotations(Vector<Annotation>* annotations)
+{
+  if (annotations) {
+    for (size_t ind = 0; ind < annotations->Size(); ind++) {
+      annotations->At(ind).annotationType->Mark();
+      annotations->At(ind).value->Mark();
+    }
   }
 }
 
@@ -946,12 +976,7 @@ void CompositeCSU::MarkChildren() const
       m_bases->At(ind).base->Mark();
   }
 
-  if (m_annotations) {
-    for (size_t ind = 0; ind < m_annotations->Size(); ind++) {
-      m_annotations->At(ind).annotationType->Mark();
-      m_annotations->At(ind).value->Mark();
-    }
-  }
+  MarkAnnotations(m_annotations);
 }
 
 void CompositeCSU::Persist()
@@ -997,6 +1022,21 @@ int Field::Compare(const Field *f0, const Field *f1)
   TryCompareValues((int)f0->IsInstanceFunction(),
                    (int)f1->IsInstanceFunction());
 
+  Vector<Annotation> *av0 = f0->GetAnnotations();
+  Vector<Annotation> *av1 = f1->GetAnnotations();
+  if (!!av0 != !!av1)
+      return av0 ? 1 : -1;
+
+  if (av0) {
+    TryCompareValues(av0->Size(), av1->Size());
+    for (size_t ind = 0; ind < av0->Size(); ind++) {
+      Annotation& ann0 = av0->At(ind);
+      Annotation& ann1 = av1->At(ind);
+      TryCompareObjects(ann0.annotationType, ann1.annotationType, String);
+      TryCompareObjects(ann0.value, ann1.value, String);
+    }
+  }
+
   if (f0->GetType() != f1->GetType()) {
     //logout << "Warning: Field mismatch on " << f0 << ": "
     //       << f0->GetType() << " " << f1->GetType() << endl;
@@ -1031,6 +1071,14 @@ void Field::Write(Buffer *buf, const Field *f)
   if (f->IsInstanceFunction())
     WriteTagEmpty(buf, TAG_FieldInstanceFunction);
 
+  for (size_t ind = 0; ind < f->GetAnnotationCount(); ind++) {
+    const Annotation &ann = f->GetAnnotation(ind);
+    WriteOpenTag(buf, TAG_Annotation);
+    String::WriteWithTag(buf, ann.annotationType, TAG_Name);
+    String::WriteWithTag(buf, ann.value, TAG_Name);
+    WriteCloseTag(buf, TAG_Annotation);
+  }
+
   WriteCloseTag(buf, TAG_Field);
 }
 
@@ -1041,6 +1089,7 @@ Field* Field::Read(Buffer *buf)
   Type *csu_type = NULL;
   Type *type = NULL;
   bool is_function = false;
+  Vector<Annotation> *annotations = NULL;
 
   Try(ReadOpenTag(buf, TAG_Field));
   while (!ReadCloseTag(buf, TAG_Field)) {
@@ -1072,12 +1121,22 @@ Field* Field::Read(Buffer *buf)
       is_function = true;
       break;
     }
+    case TAG_Annotation: {
+      Try(ReadOpenTag(buf, TAG_Annotation));
+      String *annType = String::ReadWithTag(buf, TAG_Name);
+      String *value = String::ReadWithTag(buf, TAG_Name);
+      Try(ReadCloseTag(buf, TAG_Annotation));
+      if (!annotations)
+        annotations = new Vector<Annotation>();
+      annotations->PushBack(Annotation(annType, value));
+      break;
+    }
     default:
       Try(false);
     }
   }
 
-  return Make(name, source_name, csu_type->AsCSU(), type, is_function);
+  return Make(name, source_name, csu_type->AsCSU(), type, is_function, annotations);
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -1085,9 +1144,10 @@ Field* Field::Read(Buffer *buf)
 /////////////////////////////////////////////////////////////////////
 
 Field::Field(String *name, String *source_name, TypeCSU *csu_type,
-             Type *type, bool is_function)
+             Type *type, bool is_function, Vector<Annotation> *annotations)
   : m_name(name), m_source_name(source_name),
-    m_csu_type(csu_type), m_type(type), m_is_function(is_function)
+    m_csu_type(csu_type), m_type(type), m_is_function(is_function),
+    m_annotations((annotations && !annotations->Empty()) ? new Vector<Annotation>(*annotations) : NULL)
 {
   Assert(m_name);
   Assert(m_csu_type);
@@ -1117,6 +1177,14 @@ void Field::MarkChildren() const
 
   m_csu_type->Mark();
   m_type->Mark();
+  MarkAnnotations(m_annotations);
+}
+
+void Field::AddAnnotation(String *annType, String *annValue)
+{
+  if (m_annotations == NULL)
+    m_annotations = new Vector<Annotation>();
+  m_annotations->PushBack(Annotation(annType, annValue));
 }
 
 NAMESPACE_XGILL_END

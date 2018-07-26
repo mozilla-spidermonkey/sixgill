@@ -75,7 +75,7 @@ for name in tests:
 
     def compile(source):
         cmd = "{CXX} -c {source} -fplugin={sixgill}".format(source=os.path.join(indir, source),
-                                                            CXX=os.environ.get("CXX", os.environ.get("CC", "gcc")),
+                                                            CXX=os.environ.get("CXX", os.environ.get("CC", "/home/sfink/src/mozilla/analyis/gcc/bin/gcc")),
                                                             sixgill=plugin)
         print("Running %s" % cmd)
         os.system(cmd)

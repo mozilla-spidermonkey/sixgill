@@ -21,7 +21,7 @@ assert(annotations)
 found_call_tag = False
 for annotation in annotations:
     (annType, value) = annotation['Name']
-    if annType == 'Annotate' and value == 'GC Call':
+    if annType == 'annotate' and value == 'GC Call':
         found_call_tag = True
 assert(found_call_tag)
 
@@ -33,7 +33,7 @@ assert(cell['Kind'] == 'Struct')
 annotations = cell['Annotation']
 assert(len(annotations) == 1)
 (tag, value) = annotations[0]['Name']
-assert(tag == 'Annotate')
+assert(tag == 'annotate')
 assert(value == 'GC Pointer')
 
 # Check JSObject inheritance.

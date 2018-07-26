@@ -1761,12 +1761,11 @@ void XIL_ProcessAnnotation(tree node, XIL_PPoint *point, bool all_locals,
 {
   if (annot_kind == XIL_AK_Annotate) {
       if (TREE_CODE(node) == RECORD_TYPE)
-          XIL_CSUAddAnnotation("Annotate", annot_text);
-      else if (TREE_CODE(node) == FUNCTION_DECL) {
-          XIL_Var annot_var = NULL;
-          annot_var = XIL_TranslateVar(node);
-          XIL_FunctionAddAnnotation("Annotate", annot_text, annot_var);
-      }
+          XIL_CSUAddAnnotation("annotate", annot_text);
+
+      // FUNCTION_DECL annotations should have been processed while creating the FunctionType.
+      gcc_assert(TREE_CODE(node) != FUNCTION_DECL);
+
       return;
   }
 

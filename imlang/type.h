@@ -65,6 +65,7 @@ struct Annotation
     : annotationType(_annType), value(_annValue) {}
 
   uint32_t Hash() const;
+  void Print(OutStream &out) const;
 };
 
 class Type : public HashObject
@@ -449,7 +450,7 @@ class CompositeCSU : public HashObject
   void SetEndLocation(Location *loc);
 
   // add a data field to this CSU.
-  void AddField(Field *field, size_t offset);
+  void AddDataField(Field *field, size_t offset);
 
   // add a virtual function field to this CSU.
   void AddFunctionField(Field *field, Field *base, Variable *function);
@@ -497,9 +498,10 @@ class Field : public HashObject
   static Field* Read(Buffer *buf);
 
   static Field* Make(String *name, String *source_name,
-                     TypeCSU *csu_type, Type *type, bool is_function)
+                     TypeCSU *csu_type, Type *type, bool is_function,
+                     Vector<Annotation> *annotations)
   {
-    Field xf(name, source_name, csu_type, type, is_function);
+    Field xf(name, source_name, csu_type, type, is_function, annotations);
     return g_table.Lookup(xf);
   }
 
@@ -522,6 +524,20 @@ class Field : public HashObject
   // containing CSU. this is true only for C++.
   bool IsInstanceFunction() const { return m_is_function; }
 
+  // get the annotations associated with this field.
+  Vector<Annotation>* GetAnnotations() const {
+    return m_annotations;
+  }
+
+  size_t GetAnnotationCount() const {
+    return m_annotations ? m_annotations->Size() : 0;
+  }
+  const Annotation& GetAnnotation(size_t ind) const {
+    Assert(m_annotations);
+    return m_annotations->At(ind);
+  }
+  void AddAnnotation(String *annType, String *annValue);
+
   // inherited methods
   void Print(OutStream &out) const;
   void MarkChildren() const;
@@ -532,9 +548,10 @@ class Field : public HashObject
   TypeCSU *m_csu_type;
   Type *m_type;
   bool m_is_function;
+  Vector<Annotation> *m_annotations;
 
   Field(String *name, String *source_name, TypeCSU *csu_type,
-        Type *type, bool is_function);
+        Type *type, bool is_function, Vector<Annotation> *annotations);
   static HashCons<Field> g_table;
 };
 

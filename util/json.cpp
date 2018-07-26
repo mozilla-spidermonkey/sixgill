@@ -173,9 +173,16 @@ static inline bool CanHaveMultipleInnerTags(tag_t outer, tag_t inner)
 {
   switch (outer) {
   case TAG_Variable:
-  case TAG_Field:
   case TAG_Annotation:
     return inner == TAG_Name;
+  case TAG_Field:
+    switch (inner) {
+    case TAG_Name:
+    case TAG_Annotation:
+      return true;
+    default:
+      return false;
+    }
   case TAG_BlockCFG:
     switch (inner) {
     case TAG_Location:
