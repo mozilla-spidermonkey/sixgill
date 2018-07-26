@@ -29,6 +29,24 @@ uint32_t Annotation::Hash() const
   return annotationType->Hash() ^ value->Hash();
 }
 
+template <typename T>
+void
+UnPersistField(T**& field)
+{
+    if (field)
+        delete[] field;
+    field = NULL;
+}
+
+template <typename T>
+void
+UnPersistField(T*& field)
+{
+    if (field)
+        delete field;
+    field = NULL;
+}
+
 /////////////////////////////////////////////////////////////////////
 // Type static
 /////////////////////////////////////////////////////////////////////
@@ -571,12 +589,8 @@ void TypeFunction::Persist()
 
 void TypeFunction::UnPersist()
 {
-  if (m_argument_types)
-    delete[] m_argument_types;
-  if (m_annotations) {
-    delete m_annotations;
-    m_annotations = NULL;
-  }
+  UnPersistField(m_argument_types);
+  UnPersistField(m_annotations);
 }
 
 void TypeFunction::AddAnnotation(String *annType, String *annValue)
@@ -947,25 +961,10 @@ void CompositeCSU::Persist()
 
 void CompositeCSU::UnPersist()
 {
-  if (m_data_fields) {
-    delete m_data_fields;
-    m_data_fields = NULL;
-  }
-
-  if (m_function_fields) {
-    delete m_function_fields;
-    m_function_fields = NULL;
-  }
-
-  if (m_bases) {
-    delete m_bases;
-    m_bases = NULL;
-  }
-
-  if (m_annotations) {
-    delete m_annotations;
-    m_annotations = NULL;
-  }
+  UnPersistField(m_data_fields);
+  UnPersistField(m_function_fields);
+  UnPersistField(m_bases);
+  UnPersistField(m_annotations);
 }
 
 /////////////////////////////////////////////////////////////////////
