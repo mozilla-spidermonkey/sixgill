@@ -39,15 +39,15 @@
 //   TAG_Count (array)
 //   TAG_TypeFunctionCSU (function)
 //   TAG_TypeFunctionVarArgs (function)
-//   TAG_TypeFunctionArguments (function)
+//   TAG_TypeFunctionArgument (function)
 //   TAG_Annotation (multiple)
 #define TAG_Type  1100
 
 // children: none. if present the function is varargs
 #define   TAG_TypeFunctionVarArgs  1102
 
-// children: ordered list of TAG_Type for argument types
-#define   TAG_TypeFunctionArguments  1104
+// children: TAG_Type, zero or more TAG_Annotation for arguments
+#define   TAG_TypeFunctionArgument  1104
 
 // children: TAG_Type
 #define   TAG_TypeFunctionCSU  1106

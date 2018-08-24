@@ -716,6 +716,7 @@ XIL_Type XIL_TranslateFunctionType(tree type)
   XIL_Type *arg_array = NULL;
   int arg_capacity = 0;
   int arg_count = 0;
+  XIL_AnnotationList *arg_ann_array = NULL;
   tree arg_types = TYPE_ARG_TYPES(type);
 
   // get all the argument types.
@@ -741,7 +742,28 @@ XIL_Type XIL_TranslateFunctionType(tree type)
     if (arg_count == arg_capacity) {
       arg_capacity += 4;
       arg_array = (XIL_Type *) xrealloc(arg_array, sizeof(XIL_Type) * arg_capacity);
+      if (arg_ann_array) {
+        arg_ann_array = (XIL_AnnotationList *) xrealloc(arg_ann_array, sizeof(XIL_AnnotationList) * arg_capacity);
+        memset(&arg_ann_array[arg_count], 0, (arg_capacity - arg_count) * sizeof(XIL_AnnotationList));
+      }
     }
+
+    XIL_AnnotationList annotations = XIL_MakeAnnotationList();
+    tree attr = TYPE_ATTRIBUTES(arg_type);
+    if (attr && !arg_ann_array)
+      arg_ann_array = (XIL_AnnotationList *) xcalloc(arg_capacity, sizeof(XIL_AnnotationList));
+    while (attr) {
+      const char *name = NULL;
+      const char *purpose = XIL_DecodeAttribute(attr, &name, NULL);
+
+      if (purpose && name)
+          annotations = XIL_PrependAnnotation(annotations, purpose, name);
+
+      attr = TREE_CHAIN(attr);
+    }
+
+    if (annotations)
+      arg_ann_array[arg_count] = annotations;
 
     XIL_Type xil_arg_type = XIL_TranslateType(arg_type);
     arg_array[arg_count++] = xil_arg_type;
@@ -763,7 +785,16 @@ XIL_Type XIL_TranslateFunctionType(tree type)
     free(annot);
   }
 
-  return XIL_TypeFunction(xil_return_type, this_csu, 0, arg_array, arg_count, annotations);
+  XIL_Type tf = XIL_TypeFunction(xil_return_type, this_csu, 0,
+                                 arg_array, arg_ann_array, arg_count,
+                                 annotations);
+  if (arg_ann_array) {
+    for (int i = 0; i < arg_count; i++)
+      XIL_ReleaseAnnotationList(arg_ann_array[i]);
+    free(arg_ann_array);
+  }
+  free(arg_array);
+  return tf;
 }
 
 XIL_Type generate_TranslateType(tree type)

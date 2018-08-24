@@ -273,7 +273,7 @@ void XIL_GenerateBlock(tree decl)
       XIL_Type xil_base_type = XIL_TranslateType(base_type);
       const char *this_csu = XIL_GetTypeCSUName(xil_base_type);
       XIL_AnnotationList no_annotations = XIL_MakeAnnotationList();
-      xil_type = XIL_TypeFunction(XIL_TypeVoid(), this_csu, false, NULL, 0, no_annotations);
+      xil_type = XIL_TypeFunction(XIL_TypeVoid(), this_csu, false, NULL, NULL, 0, no_annotations);
     }
     else {
       TREE_UNEXPECTED(decl);

@@ -44,6 +44,17 @@ static void PrintAnnotations(OutStream &out, Vector<Annotation> *annotations)
   }
 }
 
+static void
+MarkAnnotations(Vector<Annotation>* annotations)
+{
+  if (annotations) {
+    for (size_t ind = 0; ind < annotations->Size(); ind++) {
+      annotations->At(ind).annotationType->Mark();
+      annotations->At(ind).value->Mark();
+    }
+  }
+}
+
 template <typename T>
 void
 UnPersistField(T**& field)
@@ -67,6 +78,31 @@ UnPersistField(T*& field)
 /////////////////////////////////////////////////////////////////////
 
 HashCons<Type> Type::g_table;
+
+#define TryCompareAnnotation(V0, V1)                                 \
+  do {                                                               \
+    TryCompareObjects(V0.annotationType, V1.annotationType, String); \
+    TryCompareObjects(V0.value, V1.value, String);                   \
+  } while (0)
+
+inline int CompareAnnotations(const Vector<Annotation>* V0, const Vector<Annotation>* V1)
+{
+  if (!!V0 != !!V1)
+    return V0 ? 1 : -1;
+  if (!V0)
+    return 0;
+  TryCompareValues(V0->Size(), V1->Size());
+  for (size_t i = 0; i < V0->Size(); i++)
+    TryCompareAnnotation(V0->At(i), V1->At(i));
+  return 0;
+}
+
+#define TryCompareAnnotations(V0, V1)            \
+  do {                                           \
+    int __cmp_diff = CompareAnnotations(V0, V1); \
+    if (__cmp_diff) return __cmp_diff;           \
+  } while (0)
+
 
 int Type::Compare(const Type *y0, const Type *y1)
 {
@@ -114,14 +150,15 @@ int Type::Compare(const Type *y0, const Type *y1)
       Type *arg0 = ny0->GetArgumentType(aind);
       Type *arg1 = ny1->GetArgumentType(aind);
       TryCompareObjects(arg0, arg1, Type);
+      Vector<Annotation> *ann0 = ny0->GetArgumentAnnotations(aind);
+      Vector<Annotation> *ann1 = ny1->GetArgumentAnnotations(aind);
+      TryCompareAnnotations(ann0, ann1);
     }
     TryCompareValues(ny0->GetAnnotationCount(), ny1->GetAnnotationCount());
     for (size_t anind = 0; anind < ny0->GetAnnotationCount(); anind++) {
       const Annotation& ann0 = ny0->GetAnnotation(anind);
       const Annotation& ann1 = ny1->GetAnnotation(anind);
-      TryCompareValues(ann0.Hash(), ann1.Hash());
-      TryCompareObjects(ann0.annotationType, ann1.annotationType, String);
-      TryCompareObjects(ann0.value, ann1.value, String);
+      TryCompareAnnotation(ann0, ann1);
     }
     break;
   }
@@ -194,10 +231,20 @@ void Type::Write(Buffer *buf, const Type *y)
     if (ny->IsVarArgs())
       WriteTagEmpty(buf, TAG_TypeFunctionVarArgs);
     if (ny->GetArgumentCount() > 0) {
-      WriteOpenTag(buf, TAG_TypeFunctionArguments);
-      for (size_t aind = 0; aind < ny->GetArgumentCount(); aind++)
+      for (size_t aind = 0; aind < ny->GetArgumentCount(); aind++) {
+        WriteOpenTag(buf, TAG_TypeFunctionArgument);
         Type::Write(buf, ny->GetArgumentType(aind));
-      WriteCloseTag(buf, TAG_TypeFunctionArguments);
+        Vector<Annotation>* annots = ny->GetArgumentAnnotations(aind);
+        if (annots) {
+          for (size_t i = 0; i < annots->Size(); i++) {
+            WriteOpenTag(buf, TAG_Annotation);
+            String::WriteWithTag(buf, annots->At(i).annotationType, TAG_Name);
+            String::WriteWithTag(buf, annots->At(i).value, TAG_Name);
+            WriteCloseTag(buf, TAG_Annotation);
+          }
+        }
+        WriteCloseTag(buf, TAG_TypeFunctionArgument);
+      }
     }
     if (ny->GetAnnotationCount() > 0) {
       for (size_t ind = 0; ind < ny->GetAnnotationCount(); ind++) {
@@ -223,10 +270,12 @@ Type* Type::Read(Buffer *buf)
   uint32_t count = 0;
   bool sign = false;
   bool varargs = false;
+  bool have_arg_annotations = false;
   String *name = NULL;
   Type *target_type = NULL;
   TypeCSU *csu_type = NULL;
   Vector<Type*> argument_types;
+  Vector<Vector<Annotation>> argument_annotations;
   Vector<Annotation> annotations;
 
   Try(ReadOpenTag(buf, TAG_Type));
@@ -276,13 +325,21 @@ Type* Type::Read(Buffer *buf)
       varargs = true;
       break;
     }
-    case TAG_TypeFunctionArguments: {
+    case TAG_TypeFunctionArgument: {
       Try(kind == YK_Function);
       Try(argument_types.Empty());
-      Try(ReadOpenTag(buf, TAG_TypeFunctionArguments));
-      while (!ReadCloseTag(buf, TAG_TypeFunctionArguments)) {
+      while (ReadOpenTag(buf, TAG_TypeFunctionArgument)) {
         Type *ntype = Type::Read(buf);
         argument_types.PushBack(ntype);
+        argument_annotations.PushBack(Vector<Annotation>());
+        while (ReadOpenTag(buf, TAG_Annotation)) {
+          String *annType = String::ReadWithTag(buf, TAG_Name);
+          String *value = String::ReadWithTag(buf, TAG_Name);
+          argument_annotations.Back().PushBack(Annotation(annType, value));
+          have_arg_annotations = true;
+          Try(ReadCloseTag(buf, TAG_Annotation));
+        }
+        Try(ReadCloseTag(buf, TAG_TypeFunctionArgument));
       }
       break;
     }
@@ -321,7 +378,9 @@ Type* Type::Read(Buffer *buf)
     return MakeCSU(name);
   case YK_Function:
     Try(target_type);
-    return MakeFunction(target_type, csu_type, varargs, argument_types, annotations);
+    return MakeFunction(target_type, csu_type, varargs, argument_types,
+                        have_arg_annotations ? argument_annotations.Data() : NULL,
+                        annotations);
   default:
     Try(false);
   }
@@ -365,8 +424,9 @@ TypeCSU* Type::MakeCSU(String *csu_name) {
 TypeFunction* Type::MakeFunction(Type *return_type, TypeCSU *csu_type,
                                  bool varargs,
                                  const Vector<Type*> &arguments,
+                                 const Vector<Annotation> *argument_annotations,
                                  const Vector<Annotation> &annotations) {
-  TypeFunction xy(return_type, csu_type, varargs, arguments, annotations);
+  TypeFunction xy(return_type, csu_type, varargs, arguments, argument_annotations, annotations);
   return (TypeFunction*) g_table.Lookup(xy);
 }
 
@@ -535,15 +595,23 @@ void TypeCSU::MarkChildren() const
 
 TypeFunction::TypeFunction(Type *return_type, TypeCSU *csu_type, bool varargs,
                            const Vector<Type*> &argument_types,
+                           const Vector<Annotation> *argument_annotations,
                            const Vector<Annotation> &annotations)
   : Type(YK_Function),
     m_return_type(return_type), m_csu_type(csu_type), m_varargs(varargs),
     m_argument_types(argument_types.Data()),
+    m_argument_annotations(NULL),
     m_argument_count(argument_types.Size()),
     m_annotations(new Vector<Annotation>(annotations))
 {
   Assert(m_return_type);
   AssertArray(m_argument_types, m_argument_count);
+
+  if (argument_annotations) {
+    m_argument_annotations = new Vector<Annotation>[m_argument_count];
+    for (size_t i = 0; i < m_argument_count; i++)
+      m_argument_annotations[i] = argument_annotations[i];
+  }
 
   if (m_varargs)
     m_hash++;
@@ -552,6 +620,12 @@ TypeFunction::TypeFunction(Type *return_type, TypeCSU *csu_type, bool varargs,
     m_hash = Hash32(m_hash, m_csu_type->Hash());
   for (size_t aind = 0; aind < m_argument_count; aind++)
     m_hash = Hash32(m_hash, m_argument_types[aind]->Hash());
+  if (m_argument_annotations) {
+    for (size_t i = 0; i < m_argument_count; i++) {
+      for (size_t j = 0; j < m_argument_annotations[i].Size(); j++)
+        m_hash = Hash32(m_hash, m_argument_annotations[i].At(j).Hash());
+    }
+  }
 }
 
 size_t TypeFunction::Width() const
@@ -570,6 +644,7 @@ void TypeFunction::Print(OutStream &out) const
     if (aind != 0)
       out << ",";
     out << m_argument_types[aind];
+    PrintAnnotations(out, GetArgumentAnnotations(aind));
   }
   if (m_varargs)
     out << ",...";
@@ -582,8 +657,10 @@ void TypeFunction::MarkChildren() const
   m_return_type->Mark();
   if (m_csu_type)
     m_csu_type->Mark();
-  for (size_t aind = 0; aind < m_argument_count; aind++)
+  for (size_t aind = 0; aind < m_argument_count; aind++) {
     m_argument_types[aind]->Mark();
+    MarkAnnotations(GetArgumentAnnotations(aind));
+  }
   if (m_annotations) {
     for (size_t ind = 0; ind < m_annotations->Size(); ind++) {
       m_annotations->At(ind).annotationType->Mark();
@@ -603,11 +680,24 @@ void TypeFunction::Persist()
   else {
     m_argument_types = NULL;
   }
+
+  if (m_argument_annotations) {
+    Vector<Annotation> *new_argument_annotations = new Vector<Annotation>[m_argument_count];
+    for (size_t i = 0; i < m_argument_count; i++)
+      new_argument_annotations[i] = m_argument_annotations[i];
+    m_argument_annotations = new_argument_annotations;
+  } else {
+    m_argument_annotations = NULL;
+  }
 }
 
 void TypeFunction::UnPersist()
 {
   UnPersistField(m_argument_types);
+  if (m_argument_annotations) {
+      delete[] m_argument_annotations;
+      m_argument_annotations = NULL;
+  }
   UnPersistField(m_annotations);
 }
 
@@ -933,17 +1023,6 @@ void CompositeCSU::Print(OutStream &out) const
   }
 }
 
-static void
-MarkAnnotations(Vector<Annotation>* annotations)
-{
-  if (annotations) {
-    for (size_t ind = 0; ind < annotations->Size(); ind++) {
-      annotations->At(ind).annotationType->Mark();
-      annotations->At(ind).value->Mark();
-    }
-  }
-}
-
 void CompositeCSU::MarkChildren() const
 {
   m_name->Mark();
@@ -1034,8 +1113,7 @@ int Field::Compare(const Field *f0, const Field *f1)
     for (size_t ind = 0; ind < av0->Size(); ind++) {
       Annotation& ann0 = av0->At(ind);
       Annotation& ann1 = av1->At(ind);
-      TryCompareObjects(ann0.annotationType, ann1.annotationType, String);
-      TryCompareObjects(ann0.value, ann1.value, String);
+      TryCompareAnnotation(ann0, ann1);
     }
   }
 

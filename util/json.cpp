@@ -75,7 +75,7 @@ static void FillTagNames()
   ADD_TAG(Bit);
   ADD_TAG(Type);
   ADD_TAG(TypeFunctionVarArgs);
-  ADD_TAG(TypeFunctionArguments);
+  ADD_TAG(TypeFunctionArgument);
   ADD_TAG(TypeFunctionCSU);
   ADD_TAG(CompositeCSU);
   ADD_TAG(CSUBaseClass);
@@ -209,8 +209,8 @@ static inline bool CanHaveMultipleInnerTags(tag_t outer, tag_t inner)
     }
   case TAG_FunctionField:
     return inner == TAG_Field;
-  case TAG_TypeFunctionArguments:
-    return inner == TAG_Type;
+  case TAG_TypeFunctionArgument:
+    return inner == TAG_Annotation;
   case TAG_PEdgeCallArguments:
     return inner == TAG_Exp;
   case TAG_PEdge:
@@ -226,7 +226,13 @@ static inline bool CanHaveMultipleInnerTags(tag_t outer, tag_t inner)
   case TAG_CallEdgeSet:
     return inner == TAG_CallEdge;
   case TAG_Type:
-    return inner == TAG_Annotation;
+    switch (inner) {
+    case TAG_TypeFunctionArgument:
+    case TAG_Annotation:
+      return true;
+    default:
+      return false;
+    }
   default:
     return false;
   }
@@ -381,7 +387,7 @@ static bool PrintJSONTag(OutStream &out, Buffer *buf, int pad_spaces, tag_t oute
 	PrintPadding(out, pad_spaces);
 
 	if (inner_seen.Contains(inner_tag)) {
-	  out << "*** ERROR *** Duplicate inner tag: "
+          logout << "*** ERROR *** Duplicate inner tag: "
 		 << TagName(0, tag) << " " << TagName(tag, inner_tag) << endl;
 	  Assert(!inner_seen.Contains(inner_tag));
 	}

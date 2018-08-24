@@ -493,7 +493,8 @@ void XIL_ReleaseAnnotationList(XIL_AnnotationList list)
 
 extern "C"
 XIL_Type XIL_TypeFunction(XIL_Type return_type, const char *this_csu,
-                          int varargs, XIL_Type *arg_types, int arg_count,
+                          int varargs, XIL_Type *arg_types, XIL_AnnotationList *arg_annotations,
+                          int arg_count,
                           XIL_AnnotationList list)
 {
   GET_OBJECT(Type, return_type);
@@ -513,9 +514,23 @@ XIL_Type XIL_TypeFunction(XIL_Type return_type, const char *this_csu,
       list = list->next;
   }
 
+  Vector<Vector<Annotation>> new_arg_annotations;
+  if (arg_annotations) {
+    for (int ind = 0; ind < arg_count; ind++) {
+      new_arg_annotations.PushBack(Vector<Annotation>());
+      XIL_AnnotationList list = arg_annotations[ind];
+      while (list) {
+        new_arg_annotations.Back().PushBack(Annotation(list->ann_type, list->ann_value));
+        list = list->next;
+      }
+    }
+  }
+
   return (XIL_Type)
     Type::MakeFunction(new_return_type, csu_type,
-                       (bool) varargs, new_arg_types, annotations);
+                       (bool) varargs, new_arg_types,
+                       arg_annotations ? new_arg_annotations.Data() : NULL,
+                       annotations);
 }
 
 const char* XIL_GetTypeCSUName(XIL_Type csu_type)

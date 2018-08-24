@@ -902,7 +902,7 @@ void XIL_TranslateStatement(struct XIL_TreeEnv *env, tree node)
         XIL_Type size_type = XIL_TypeInt(xil_pointer_width, 0);
         XIL_AnnotationList no_annotations = XIL_MakeAnnotationList();
         XIL_Type alloca_type =
-          XIL_TypeFunction(void_ptr, NULL, 0, &size_type, 1, no_annotations);
+          XIL_TypeFunction(void_ptr, NULL, 0, &size_type, NULL, 1, no_annotations);
 
         XIL_Var alloca_func = XIL_VarFunc("__xil_alloca", "__xil_alloca");
         XIL_Exp alloca_exp = XIL_ExpVar(alloca_func);
@@ -2215,7 +2215,7 @@ void XIL_TranslateExpression(struct XIL_TreeEnv *env, tree node)
     XIL_Type xil_type = XIL_TranslateType(type);
     XIL_Type arg_type = XIL_TypePointer(XIL_TypeVoid(), xil_pointer_width);
     XIL_AnnotationList no_annotations = XIL_MakeAnnotationList();
-    XIL_Type func_type = XIL_TypeFunction(xil_type, NULL, false, &arg_type, 1, no_annotations);
+    XIL_Type func_type = XIL_TypeFunction(xil_type, NULL, false, &arg_type, NULL, 1, no_annotations);
 
     XIL_Exp xil_list = NULL;
     MAKE_ENV(list_env, env->point, NULL);

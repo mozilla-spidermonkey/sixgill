@@ -147,8 +147,9 @@ XIL_Type XIL_TypePointer(XIL_Type target_type, int width);
 XIL_Type XIL_TypeArray(XIL_Type element_type, int count);
 XIL_Type XIL_TypeCSU(const char *csu_name, int *generate);
 XIL_Type XIL_TypeFunction(XIL_Type return_type, const char *this_csu,
-                          int varargs, XIL_Type *arg_types, int arg_count,
-                          XIL_AnnotationList annotations);
+                          int varargs, XIL_Type *arg_types, XIL_AnnotationList *arg_annotations,
+                          int arg_count,
+                          XIL_AnnotationList list);
 
 // get the name associated with a CSU type, or NULL for non-CSU types.
 const char* XIL_GetTypeCSUName(XIL_Type csu_type);

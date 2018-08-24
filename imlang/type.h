@@ -86,6 +86,7 @@ class Type : public HashObject
   static TypeFunction* MakeFunction(Type *return_type, TypeCSU *csu_type,
                                     bool varargs,
                                     const Vector<Type*> &arguments,
+                                    const Vector<Annotation> *argument_annotations,
                                     const Vector<Annotation> &annotations);
 
   // get the width to use when making pointer types. this should be made
@@ -268,6 +269,17 @@ class TypeFunction : public Type
     return m_argument_types[argument];
   }
 
+  // get the annotations for an argument of this function.
+  // returns NULL if the argument is out of range.
+  Vector<Annotation>* GetArgumentAnnotations(size_t argument) const
+  {
+    if (argument >= m_argument_count)
+      return NULL;
+    if (!m_argument_annotations)
+      return NULL;
+    return &m_argument_annotations[argument];
+  }
+
   // get the annotations associated with this function.
   size_t GetAnnotationCount() const {
     return m_annotations ? m_annotations->Size() : 0;
@@ -292,11 +304,14 @@ class TypeFunction : public Type
   TypeCSU *m_csu_type;
   bool m_varargs;
   Type **m_argument_types;
+  Vector<Annotation> *m_argument_annotations;
   size_t m_argument_count;
   Vector<Annotation> *m_annotations;
 
   TypeFunction(Type *return_type, TypeCSU *csu_type, bool varargs,
-               const Vector<Type*> &arguments, const Vector<Annotation> &annotations);
+               const Vector<Type*> &arguments,
+               const Vector<Annotation> *argument_annotations,
+               const Vector<Annotation> &annotations);
   friend class Type;
 };
 
