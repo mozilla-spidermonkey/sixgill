@@ -747,12 +747,13 @@ XIL_Type XIL_TranslateFunctionType(tree type)
     arg_array[arg_count++] = xil_arg_type;
   }
 
+  // The pending annotations list *might* contain annotations for other types,
+  // if for example we are processing a function that takes a function as an
+  // argument. Our annotations will be at the head of the list.
   XIL_AnnotationList annotations = XIL_MakeAnnotationList();
-  while (xil_active_env.annots) {
+  while (xil_active_env.annots && xil_active_env.annots->type == type) {
     struct XIL_PendingAnnotation *annot = xil_active_env.annots;
     xil_active_env.annots = annot->next;
-
-    gcc_assert(annot->type == type);
 
     const char *annot_text = NULL;
     const char *purpose = XIL_DecodeAttribute(annot->attr, &annot_text, NULL);

@@ -477,7 +477,7 @@ XIL_AnnotationList XIL_PrependAnnotation(XIL_AnnotationList list,
                                          const char* ann_value)
 {
     String *new_ann_type = String::Make(ann_type);
-    String *new_ann_value = String::Make(ann_value);
+    String *new_ann_value = String::Make(ann_value ? ann_value : "");
     return new _struct_XIL_AnnotationList(new_ann_type, new_ann_value, list);
 }
 

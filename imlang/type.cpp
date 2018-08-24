@@ -199,12 +199,14 @@ void Type::Write(Buffer *buf, const Type *y)
         Type::Write(buf, ny->GetArgumentType(aind));
       WriteCloseTag(buf, TAG_TypeFunctionArguments);
     }
-    for (size_t ind = 0; ind < ny->GetAnnotationCount(); ind++) {
-      const Annotation &ff = ny->GetAnnotation(ind);
-      WriteOpenTag(buf, TAG_Annotation);
-      String::WriteWithTag(buf, ff.annotationType, TAG_Name);
-      String::WriteWithTag(buf, ff.value, TAG_Name);
-      WriteCloseTag(buf, TAG_Annotation);
+    if (ny->GetAnnotationCount() > 0) {
+      for (size_t ind = 0; ind < ny->GetAnnotationCount(); ind++) {
+        const Annotation &ff = ny->GetAnnotation(ind);
+        WriteOpenTag(buf, TAG_Annotation);
+        String::WriteWithTag(buf, ff.annotationType, TAG_Name);
+        String::WriteWithTag(buf, ff.value, TAG_Name);
+        WriteCloseTag(buf, TAG_Annotation);
+      }
     }
     break;
   }
