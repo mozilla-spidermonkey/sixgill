@@ -124,7 +124,7 @@ function package() {
   cp scripts/wrap_gcc/* $D/sixgill/usr/libexec/sixgill/scripts/wrap_gcc
   rm $D/sixgill/usr/bin/*.a
   rm $D/sixgill/usr/bin/{xcheck,xinfer}
-  strip $D/sixgill/usr/bin/* || true
+  [ -z "$NOSTRIP" ] && strip $D/sixgill/usr/bin/* || true
   ( cd $D && tar -Jcvf - sixgill ) > $D/sixgill.tar.xz
   make_checksum "$D/sixgill.tar.xz"
   SHORT=$(echo "$CKSUM" | cut -c-12)
