@@ -1130,14 +1130,17 @@ bool WritePacket(int fd, Buffer *input)
   size_t read_size = input->pos - input->base;
   size_t needed = UINT32_LENGTH + data_length - read_size;
 
-  ssize_t ret = write(fd, input->pos, needed);
-  if (ret == -1) {
-    fprintf(logfile, "ERROR: write() failure: %d\n", errno);
-    return false;
+  while (needed > 0) {
+      ssize_t ret = write(fd, input->pos, needed);
+      if (ret == -1) {
+          fprintf(logfile, "ERROR: write() failure: %d\n", errno);
+          return false;
+      }
+      input->pos += ret;
+      needed -= ret;
   }
-  input->pos += ret;
 
-  return (ret == (ssize_t) needed);
+  return (needed == 0);
 }
 
 NAMESPACE_XGILL_END
