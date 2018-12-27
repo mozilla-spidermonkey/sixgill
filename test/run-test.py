@@ -70,9 +70,8 @@ tests = ['gchazard']
 for name in tests:
     indir = os.path.join(topdir, "test", name)
     outdir = os.path.join(topdir, "test", "test-output", name)
-    if os.path.exists(outdir):
-        os.system("rm", "-r", outdir)
-    os.mkdir(outdir)
+    if not os.path.exists(outdir):
+        os.mkdir(outdir)
 
     def compile(source):
         cmd = "{CXX} -c {source} -fplugin={sixgill}".format(source=os.path.join(indir, source),
