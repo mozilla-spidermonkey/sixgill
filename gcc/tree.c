@@ -236,8 +236,11 @@ void XIL_TranslateConstant(struct XIL_TreeEnv *env, tree node)
 
 #ifdef HAVE_VOID_CST
   // constant void.
-  case VOID_CST:
-    TREE_BOGUS_RESULT(env);
+  case VOID_CST: {
+    XIL_Exp result = XIL_ExpEmpty();
+    XIL_ProcessResult(env, result);
+    return;
+  }
 #endif
 
   default:
