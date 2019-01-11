@@ -151,6 +151,8 @@ XIL_Type XIL_TypeFunction(XIL_Type return_type, const char *this_csu,
                           int arg_count,
                           XIL_AnnotationList list);
 
+XIL_Type XIL_RemoveFunctionParameters(XIL_Type type);
+
 // get the name associated with a CSU type, or NULL for non-CSU types.
 const char* XIL_GetTypeCSUName(XIL_Type csu_type);
 

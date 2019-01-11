@@ -269,11 +269,7 @@ void XIL_GenerateBlock(tree decl)
   // doesn't show up when the functions are called.
   if (XIL_IsDestructor(decl)) {
     if (TREE_CODE(type) == METHOD_TYPE) {
-      tree base_type = TYPE_METHOD_BASETYPE(type);
-      XIL_Type xil_base_type = XIL_TranslateType(base_type);
-      const char *this_csu = XIL_GetTypeCSUName(xil_base_type);
-      XIL_AnnotationList no_annotations = XIL_MakeAnnotationList();
-      xil_type = XIL_TypeFunction(XIL_TypeVoid(), this_csu, false, NULL, NULL, 0, no_annotations);
+      xil_type = XIL_RemoveFunctionParameters(xil_type);
     }
     else {
       TREE_UNEXPECTED(decl);

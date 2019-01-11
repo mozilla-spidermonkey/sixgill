@@ -292,6 +292,8 @@ class TypeFunction : public Type
   // add an annotation to this Function.
   void AddAnnotation(String *annType, String *annValue);
 
+  TypeFunction* CloneWithoutArguments();
+
   // inherited methods
   size_t Width() const;
   void Print(OutStream &out) const;

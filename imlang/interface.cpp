@@ -533,6 +533,12 @@ XIL_Type XIL_TypeFunction(XIL_Type return_type, const char *this_csu,
                        annotations);
 }
 
+XIL_Type XIL_RemoveFunctionParameters(XIL_Type type)
+{
+  GET_OBJECT(Type, type);
+  return (XIL_Type) new_type->AsFunction()->CloneWithoutArguments();
+}
+
 const char* XIL_GetTypeCSUName(XIL_Type csu_type)
 {
   GET_OBJECT(Type, csu_type);

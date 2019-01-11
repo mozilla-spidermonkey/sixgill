@@ -628,6 +628,15 @@ TypeFunction::TypeFunction(Type *return_type, TypeCSU *csu_type, bool varargs,
   }
 }
 
+TypeFunction* TypeFunction::CloneWithoutArguments()
+{
+  Vector<Type*> emptyArguments;
+  Vector<Annotation> emptyAnnotations;
+  return new TypeFunction(m_return_type, m_csu_type, m_varargs,
+                          emptyArguments, NULL,
+                          m_annotations ? *m_annotations : emptyAnnotations);
+}
+
 size_t TypeFunction::Width() const
 {
   // treat all functions as having a one byte width.
