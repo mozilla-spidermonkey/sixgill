@@ -248,12 +248,11 @@ class PrintOutStream : public OutStream {
 // the usual cout/cerr streams. the main drawback with these is that they
 // can't be used during static initialization; even if all members are
 // removed from PrintOutStream, the vtable for these might not be initialized
-// properly by the time cout/cerr/clog is used. (it would be nice if uses
+// properly by the time cout/cerr is used. (it would be nice if uses
 // of the vtable were optimized away, as the Put/Flush methods are final
 // in PrintOutStream, but tis not to be).
 extern PrintOutStream cout;
 extern PrintOutStream cerr;
-extern PrintOutStream clog;  // alias for cerr.
 
 // output stream for writing to a file.
 class FileOutStream : public OutStream {

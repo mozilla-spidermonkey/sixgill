@@ -63,7 +63,7 @@ protected:
 
 public:
   // initially true; when true, we write a record of the thrown exception
-  // to clog
+  // to cerr
   static bool logExceptions;
 
   // current # of xBases running about; used to support unrolling()
@@ -120,13 +120,13 @@ void formatAssert_fail(char const *cond, char const *file, int line) NORETURN;
 #define formatAssert(cond) \
   ((cond)? (void)0 : formatAssert_fail(#cond, __FILE__, __LINE__))
 
-  
+
 // -------------------- XOpen ---------------------
 // thrown when we fail to open a file
 class XOpen : public xBase {
 public:
   string filename;
-  
+
 public:
   XOpen(rostring fname);
   XOpen(XOpen const &obj);
@@ -147,7 +147,7 @@ public:
   XOpenEx(rostring fname, rostring mode, rostring cause);
   XOpenEx(XOpenEx const &obj);
   ~XOpenEx();
-                                              
+
   // convert a mode string as into human-readable participle,
   // e.g. "r" becomes "reading"
   static string interpretMode(rostring mode);
@@ -189,4 +189,3 @@ void throw_XFatal(rostring msg) NORETURN;
 
 
 #endif // EXC_H
-

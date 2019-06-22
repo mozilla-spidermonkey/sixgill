@@ -283,6 +283,8 @@ void XIL_GenerateBlock(tree decl)
   if (DECL_EXTERNAL(decl))
     return;
 
+  const char *name = XIL_GetVarName(xil_var);
+
   // parse the annotation kind.
   XIL_AnnotationKind use_kind = (XIL_AnnotationKind) 0;
   if (annotation_kind) {
@@ -292,8 +294,6 @@ void XIL_GenerateBlock(tree decl)
 #undef XIL_TEST_ANNOT
     gcc_assert(use_kind);
   }
-
-  const char *name = XIL_GetVarName(xil_var);
 
   xil_active_env.decl = decl;
   xil_active_env.decl_name = name;
@@ -330,7 +330,10 @@ void XIL_GenerateBlock(tree decl)
   // parser has no current position.
   const char *end_file = LOCATION_FILE(input_location);
   int end_line = LOCATION_LINE(input_location);
-  if (!end_file) {
+  if (!end_file || memmem(name, strlen(name) + 1, "_type_info", 11)) {
+    // Match /_type_info$/. Use memmem to include the \0 at the end. The RTTI
+    // *_type_info decls have bogus source locations, and will trip the assert
+    // below.
     end_file = decl_file;
     end_line = decl_line;
   }
@@ -501,8 +504,13 @@ static struct attribute_spec annotation_name_attribute = {
   .decl_required = 0,
   .type_required = 0,
   .function_type_required = 0,
+#if GCC_VERSION_NUMBER < 80000
   .handler = annotation_name_handler,
   .affects_type_identity = 0,
+#else
+  .affects_type_identity = 0,
+  .handler = annotation_name_handler,
+#endif
 };
 
 // handler to pick up the tree for the 'this' CSU type.
@@ -521,8 +529,13 @@ static struct attribute_spec annotation_this_attribute = {
   .decl_required = 0,
   .type_required = 0,
   .function_type_required = 0,
+#if GCC_VERSION_NUMBER < 80000
   .handler = annotation_this_handler,
   .affects_type_identity = 0,
+#else
+  .affects_type_identity = 0,
+  .handler = annotation_this_handler,
+#endif
 };
 
 static struct attribute_spec annotation_this_var_attribute = {
@@ -532,8 +545,13 @@ static struct attribute_spec annotation_this_var_attribute = {
   .decl_required = 0,
   .type_required = 0,
   .function_type_required = 0,
+#if GCC_VERSION_NUMBER < 80000
   .handler = NULL,
   .affects_type_identity = 0,
+#else
+  .affects_type_identity = 0,
+  .handler = NULL,
+#endif
 };
 
 // attribute attached to global functions/variables, indicating the full name.
@@ -544,8 +562,13 @@ static struct attribute_spec annotation_global_attribute = {
   .decl_required = 0,
   .type_required = 0,
   .function_type_required = 0,
+#if GCC_VERSION_NUMBER < 80000
   .handler = NULL,
   .affects_type_identity = 0,
+#else
+  .affects_type_identity = 0,
+  .handler = NULL,
+#endif
 };
 
 // attribute attached to parameters, indicating the parameter index.
@@ -556,8 +579,13 @@ static struct attribute_spec annotation_param_attribute = {
   .decl_required = 0,
   .type_required = 0,
   .function_type_required = 0,
+#if GCC_VERSION_NUMBER < 80000
   .handler = NULL,
   .affects_type_identity = 0,
+#else
+  .affects_type_identity = 0,
+  .handler = NULL,
+#endif
 };
 
 // attribute attached to return variables.
@@ -568,8 +596,13 @@ static struct attribute_spec annotation_return_attribute = {
   .decl_required = 0,
   .type_required = 0,
   .function_type_required = 0,
+#if GCC_VERSION_NUMBER < 80000
   .handler = NULL,
   .affects_type_identity = 0,
+#else
+  .affects_type_identity = 0,
+  .handler = NULL,
+#endif
 };
 
 // attribute attached to local variables, indicating the actual name
@@ -581,8 +614,13 @@ static struct attribute_spec annotation_local_attribute = {
   .decl_required = 0,
   .type_required = 0,
   .function_type_required = 0,
+#if GCC_VERSION_NUMBER < 80000
   .handler = NULL,
   .affects_type_identity = 0,
+#else
+  .affects_type_identity = 0,
+  .handler = NULL,
+#endif
 };
 
 // optional attribute attached to any of the above variables,
@@ -594,13 +632,19 @@ static struct attribute_spec annotation_source_attribute = {
   .decl_required = 0,
   .type_required = 0,
   .function_type_required = 0,
+#if GCC_VERSION_NUMBER < 80000
   .handler = NULL,
   .affects_type_identity = 0,
+#else
+  .affects_type_identity = 0,
+  .handler = NULL,
+#endif
 };
 
 void gcc_plugin_attributes(void *gcc_data, void *user_data)
 {
-#define XIL_MAKE_ATTR(NAME, STR, _)                     \
+#if GCC_VERSION_NUMBER < 80000
+# define XIL_MAKE_ATTR(NAME, STR, _)                    \
   static struct attribute_spec NAME ## _attribute = {   \
     .name = STR,                                        \
     .min_length = 1,                                    \
@@ -612,6 +656,20 @@ void gcc_plugin_attributes(void *gcc_data, void *user_data)
     .affects_type_identity = 0,                         \
   };                                                    \
   register_attribute(&(NAME ## _attribute));
+#else
+# define XIL_MAKE_ATTR(NAME, STR, _)                    \
+  static struct attribute_spec NAME ## _attribute = {   \
+    .name = STR,                                        \
+    .min_length = 1,                                    \
+    .max_length = 1,                                    \
+    .decl_required = 0,                                 \
+    .type_required = 0,                                 \
+    .function_type_required = 0,                        \
+    .affects_type_identity = 0,                         \
+    .handler = NULL,                                    \
+  };                                                    \
+  register_attribute(&(NAME ## _attribute));
+#endif
 
   XIL_ITERATE_ANNOT(XIL_MAKE_ATTR)
 #undef XIL_MAKE_ATTR

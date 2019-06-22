@@ -556,15 +556,10 @@ void XIL_ScanDefineType(tree type)
       XIL_ScanTemplateInfo(type);
 
     // scan the types of any methods.
-    VEC(tree,gc) *methods = CLASSTYPE_METHOD_VEC(type);
-    int ind = 2;
-    tree node = NULL;
-    for (; methods && VEC_iterate(tree,methods,ind,node); ind++) {
-      while (node) {
-        tree method = OVL_CURRENT(node);
-        if (TREE_CODE(method) == FUNCTION_DECL)
-          XIL_ScanPrintType(TREE_TYPE(method), true);
-        node = OVL_NEXT(node);
+    for (method_iterator miter(type); miter; ++miter) {
+      for (ovl_iterator iter(*miter); iter; ++iter) {
+        if (TREE_CODE(*iter) == FUNCTION_DECL)
+            XIL_ScanPrintType(TREE_TYPE(*iter), true);
       }
     }
   }
@@ -681,8 +676,8 @@ static bool HandleMissingDeclaration(const char *name)
 
   if (TREE_CODE(decl) == OVERLOAD) {
     // the missing declaration is one of a number of overloaded functions.
-    while (decl) {
-      tree function = OVL_CURRENT(decl);
+    for (ovl_iterator iter(decl); iter; ++iter) {
+      tree function = *iter;
       if (TREE_CODE(function) == FUNCTION_DECL) {
         XIL_ScanPrintType(TREE_TYPE(function), true);
 
@@ -692,8 +687,6 @@ static bool HandleMissingDeclaration(const char *name)
         info->next = state->vars;
         state->vars = info;
       }
-
-      decl = OVL_NEXT(decl);
     }
     return true;
   }
@@ -1232,35 +1225,25 @@ void XIL_PrintStruct(FILE *file, const char *csu_name, tree type)
     XIL_PrintTemplateInfo(file, type);
 
   if (c_dialect_cxx() && !XIL_IsAnonymousCxx(TYPE_NAME(type))) {
-    // print out the methods as well. start at index 2 in the methods vector,
-    // which skips all constructors and destructors for the class. don't do
-    // this for anonymous structures, as they may have copy constructors
-    // that take the same type as an argument, leading to infinite recursion.
-    VEC(tree,gc) *methods = CLASSTYPE_METHOD_VEC(type);
-    int ind = 2;
-    tree node = NULL;
-    for (; methods && VEC_iterate(tree,methods,ind,node); ind++) {
-      while (node) {
-        // the node may or may not be an overload. these handle both cases.
-        tree method = OVL_CURRENT(node);
-        if (TREE_CODE(method) != FUNCTION_DECL) {
-          node = OVL_NEXT(node);
+    // print out the methods as well. don't do this for anonymous structures,
+    // as they may have copy constructors that take the same type as an
+    // argument, leading to infinite recursion.
+    for (method_iterator miter(type); miter; ++miter) {
+      for (ovl_iterator iter(*miter); iter; ++iter) {
+        if (TREE_CODE(*iter) != FUNCTION_DECL)
           continue;
-        }
-
+        tree method = *iter;
         tree method_type = TREE_TYPE(method);
         const char *name = IDENTIFIER_POINTER(DECL_NAME(method));
 
         // skip printing for assignment operators, these can't be in unions.
-        // TODO: use of assignment operators in annotations is problematic.
-        // if the annotation uses this and it is a non-default operator,
-        // the annotation won't compile. if it is a default operator,
-        // GCC will fabricate a new one with the wrong name while processing
-        // the annotation file.
-        if (!strcmp(name, "operator=")) {
-          node = OVL_NEXT(node);
+        // TODO: use of assignment operators in annotations is problematic. if
+        // the annotation uses this and it is a non-default operator, the
+        // annotation won't compile. if it is a default operator, GCC will
+        // fabricate a new one with the wrong name while processing the
+        // annotation file.
+        if (!strcmp(name, "operator="))
           continue;
-        }
 
         struct XIL_CString full_name = XIL_GlobalName(method);
         fprintf(file, "__attribute__((annot_global(\"%s\")))\n",
@@ -1272,8 +1255,6 @@ void XIL_PrintStruct(FILE *file, const char *csu_name, tree type)
 
         XIL_PrintDeclaration(file, method_type, name);
         fprintf(file, ";\n");
-
-        node = OVL_NEXT(node);
       }
     }
   }

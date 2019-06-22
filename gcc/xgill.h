@@ -57,6 +57,7 @@ EXTERN_BEGIN
 #include <coretypes.h>
 #include <tm.h>
 #include <tree.h>
+#include <cp/cp-tree.h>
 #include <vec.h>
 
 #include <cpplib.h>
@@ -71,10 +72,50 @@ EXTERN_END
 
 // gcc version compatibility
 
+// eg gcc 8.3.1 maps to 80301
+#define GCC_VERSION_NUMBER (__GNUC__ * 10000 + __GNUC_MINOR__ * 100 + __GNUC_PATCHLEVEL__)
+
 #ifndef VEC
 # define VEC(T,U) vec<T,va_gc>
 # define VEC_iterate(T,V,I,P) (V)->iterate((I), &(P))
 #endif
+
+#ifdef OVL_CURRENT
+// gcc 8 introduced an iterator over (possibly) overloaded functions. Polyfill
+// for gcc 7.
+class ovl_iterator {
+ public:
+  tree node;
+
+  ovl_iterator(tree n) : node(n) {}
+  tree operator*() const {
+    return TREE_CODE(node) == OVERLOAD ? OVL_FUNCTION(node) : node;
+  }
+  explicit operator bool() { return !!node; }
+  ovl_iterator& operator++() {
+    node = TREE_CODE(node) != OVERLOAD ? NULL_TREE : OVL_CHAIN(node);
+    return *this;
+  }
+};
+#endif
+
+// Wrap up version differences in an iterator over the method/member vector.
+class method_iterator {
+ public:
+  VEC(tree,gc)* members;
+  size_t method_ind;
+  method_iterator(tree type)
+#ifdef CLASSTYPE_MEMBER_VEC
+   : members(CLASSTYPE_MEMBER_VEC(type)), method_ind(0) {}
+#else
+   // Starting at index 2 to skip constructors and destructors.
+   : members(CLASSTYPE_METHOD_VEC(type)), method_ind(CLASSTYPE_FIRST_CONVERSION_SLOT) {}
+#endif
+
+  explicit operator bool() const { return members && method_ind < members->length(); }
+  method_iterator& operator++() { ++method_ind; return *this; }
+  tree operator*() { return members->address()[method_ind]; }
+};
 
 // suppress weird error with CUMULATIVE_ARGS not defined in target.h
 #ifndef CUMULATIVE_ARGS

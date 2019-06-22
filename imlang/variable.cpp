@@ -196,7 +196,7 @@ void Variable::SetType(Type *type, bool override)
   if (m_type) {
     if (m_type != type && !override)
       logout << "ERROR: Conflicting types for " << this << ": "
-             << m_type << " " << type << endl;
+             << m_type << " vs " << type << endl;
   }
 
   m_type = type;

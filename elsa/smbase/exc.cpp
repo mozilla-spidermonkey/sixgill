@@ -18,7 +18,7 @@ xBase::xBase(rostring m)
   : msg(m)
 {
   if (logExceptions) {
-    clog << "Exception thrown: " << m << endl;
+    cerr << "Exception thrown: " << m << endl;
   }
 
   // done at very end when we know this object will
@@ -262,4 +262,3 @@ int main()
 }
 
 #endif // TEST_EXC
-

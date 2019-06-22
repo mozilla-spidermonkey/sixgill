@@ -735,8 +735,51 @@ void XIL_TranslateBinary(struct XIL_TreeEnv *env, tree node)
     return;
   }
 
+  case POINTER_DIFF_EXPR: {
+    // this will be wrapped in an EXACT_DIV_EXPR which will cancel out the
+    // multiply we insert here. we can just see 'pointer - pointer' here, as
+    // 'pointer - index' will be converted to a POINTER_PLUS_EXPR.
+
+    XIL_Type xil_stride_type = NULL;
+    int bytes = 0;
+
+    tree left_type = TREE_TYPE(left);
+    tree right_type = TREE_TYPE(right);
+
+    gcc_assert(TREE_CODE(left_type) == POINTER_TYPE);
+    gcc_assert(TREE_CODE(right_type) == POINTER_TYPE);
+
+    int left_bytes = GetPointerStrideSize(TREE_TYPE(left_type));
+    int right_bytes = GetPointerStrideSize(TREE_TYPE(right_type));
+
+    gcc_assert(left_bytes == right_bytes);
+
+    if (left_bytes == right_bytes) {
+      xil_stride_type = XIL_TranslateType(TREE_TYPE(left_type));
+      bytes = left_bytes;
+    }
+
+    if (!bytes) {
+      xil_stride_type = XIL_TypeVoid();
+      bytes = 1;
+    }
+
+    // for regular subractions just use B_Minus.
+    if (!xil_stride_type) {
+      binop = XIL_B_Minus;
+      break;
+    }
+
+    XIL_Exp bytes_exp = XIL_ExpInt(bytes);
+    XIL_Exp diff = XIL_ExpBinop(XIL_B_MinusPP, xil_left, xil_right,
+                                xil_stride_type, 0, true);
+    XIL_Exp result = XIL_ExpBinop(XIL_B_Mult, diff, bytes_exp, NULL, 0, true);
+    XIL_ProcessResult(env, result);
+    return;
+  }
+
   case MINUS_EXPR: {
-    // there is no special POINTER_MINUS_EXPR, so figure out from the types
+    // there formerly was no special POINTER_DIFF_EXPR, so figure out from the types
     // of the operands whether this is a pointer subtraction. if so then this
     // will be wrapped in an EXACT_DIV_EXPR which will cancel out the multiply
     // we insert here. we can just see 'pointer - pointer' here,
@@ -1339,6 +1382,32 @@ void XIL_TranslateStatement(struct XIL_TreeEnv *env, tree node)
     return;
   }
 
+  case TRY_FINALLY_EXPR: {
+    // Treat these as if they were just a list of statements, body then
+    // finally. In actuality, it is possible that the body will goto a label --
+    // in that case, the body executes, then the finally, but it does not
+    // continue; it goes to the target of the goto. With the current
+    // implementation here, the goto will be processed and the finally will be
+    // skipped.
+    //
+    // It would be more correct to implement something like
+    // XIL_TranslateTreeWithFinally(env, body, finally), and inject the finally
+    // code whenever a goto is seen. But I haven't encountered the need for
+    // this in practice yet. (And it seems a bit complicated; wouldn't this
+    // require a stack of finally trees?) The typical way this shows up is for
+    // ~GuardObjectNotifier, which really doesn't matter.
+    //
+    // Within gcc, this is handled by a later rewrite phase that injects the
+    // cleanup code on every outbound edge.
+    tree body = TREE_OPERAND(node, 0);
+    if (body)
+      XIL_TranslateTree(env, body);
+    tree finally = TREE_OPERAND(node, 1);
+    if (finally)
+      XIL_TranslateTree(env, finally);
+    return;
+  }
+
   case LOOP_EXPR: {
     tree body = TREE_OPERAND(node, 0);
 
@@ -1383,6 +1452,10 @@ void XIL_TranslateStatement(struct XIL_TreeEnv *env, tree node)
 
   case USING_STMT:
     // these show up with 'using' directives inside a function. ignore.
+    return;
+
+  case DEBUG_BEGIN_STMT:
+    // mark the beginning of a source statement for the debugger.
     return;
 
   default:
@@ -2032,7 +2105,11 @@ void XIL_TranslateExpression(struct XIL_TreeEnv *env, tree node)
     if (XIL_TranslateAnnotationCall(env, node))
       return;
 
-    tree function = TREE_OPERAND(node, 1);
+    tree function = CALL_EXPR_FN(node);
+    if (!function) {
+      // This happens somehow with MOZ_FALLTHROUGH.
+      return;
+    }
 
     // get the signature of the function. the function expression should be
     // of function pointer type.

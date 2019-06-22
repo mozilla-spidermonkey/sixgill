@@ -442,22 +442,14 @@ struct XIL_VirtualFunction* XIL_GetFunctionFields(tree type)
 
   // add entries for any virtual functions in this class that aren't inherited.
 
-  VEC(tree,gc) *methods = CLASSTYPE_METHOD_VEC(type);
-  int method_ind = 2;
-  tree node = NULL;
-  for (; methods && VEC_iterate(tree,methods,method_ind,node); method_ind++) {
-    while (node) {
-      // the node may or may not be an overload. these handle both cases.
-      tree method = OVL_CURRENT(node);
-      if (TREE_CODE(method) != FUNCTION_DECL) {
-        node = OVL_NEXT(node);
+  for (method_iterator miter(type); miter; ++miter) {
+    for (ovl_iterator iter(*miter); iter; ++iter) {
+      tree method = *iter;
+      if (TREE_CODE(method) != FUNCTION_DECL)
         continue;
-      }
 
-      if (!DECL_VIRTUAL_P(method)) {
-        node = OVL_NEXT(node);
+      if (!DECL_VIRTUAL_P(method))
         continue;
-      }
 
       // check if this method overrides a base class method, in which case
       // there is already an entry for it.
@@ -470,11 +462,8 @@ struct XIL_VirtualFunction* XIL_GetFunctionFields(tree type)
           virt->field = XIL_TranslateField(method);
         }
       }
-      if (excluded) {
-        node = OVL_NEXT(node);
+      if (excluded)
         continue;
-      }
-
       // make an entry for this function.
       virt = (struct XIL_VirtualFunction*) xcalloc(1, sizeof(struct XIL_VirtualFunction));
       virt->next = *pvirt;
@@ -483,7 +472,6 @@ struct XIL_VirtualFunction* XIL_GetFunctionFields(tree type)
       virt->field = XIL_TranslateField(method);
       virt->decl = method;
       virt->index = TREE_UINT(DECL_VINDEX(method));
-      node = OVL_NEXT(node);
     }
   }
 
@@ -640,16 +628,12 @@ XIL_Type XIL_TranslateRecordType(tree type)
     // first generate types for all virtual methods in this class.
     // the function fields need to be able to get types for these methods
     // without triggering a reentrant generation for a record type.
-    VEC(tree,gc) *methods = CLASSTYPE_METHOD_VEC(type);
-    int method_ind = 2;
-    tree node = NULL;
-    for (; methods && VEC_iterate(tree,methods,method_ind,node); method_ind++) {
-      while (node) {
+    for (method_iterator miter(type); miter; ++miter) {
+      for (ovl_iterator iter(*miter); iter; ++iter) {
         // the node may or may not be an overload. these handle both cases.
-        tree method = OVL_CURRENT(node);
+        tree method = *iter;
         if (TREE_CODE(method) == FUNCTION_DECL && DECL_VIRTUAL_P(method))
           XIL_TranslateType(TREE_TYPE(method));
-        node = OVL_NEXT(node);
       }
     }
 
