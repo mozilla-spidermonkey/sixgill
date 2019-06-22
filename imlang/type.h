@@ -289,9 +289,6 @@ class TypeFunction : public Type
     return m_annotations->At(ind);
   }
 
-  // add an annotation to this Function.
-  void AddAnnotation(String *annType, String *annValue);
-
   TypeFunction* CloneWithoutArguments();
 
   // inherited methods

@@ -599,13 +599,13 @@ TypeFunction::TypeFunction(Type *return_type, TypeCSU *csu_type, bool varargs,
                            const Vector<Annotation> &annotations)
   : Type(YK_Function),
     m_return_type(return_type), m_csu_type(csu_type), m_varargs(varargs),
-    m_argument_types(argument_types.Data()),
+    m_argument_types(argument_types.Size() ? argument_types.Data() : NULL),
     m_argument_annotations(NULL),
     m_argument_count(argument_types.Size()),
-    m_annotations(new Vector<Annotation>(annotations))
+    m_annotations(annotations.Size() ? new Vector<Annotation>(annotations) : NULL)
 {
   Assert(m_return_type);
-  AssertArray(m_argument_types, m_argument_count);
+  AssertOptionalArray(m_argument_types, m_argument_count);
 
   if (argument_annotations) {
     m_argument_annotations = new Vector<Annotation>[m_argument_count];
@@ -632,9 +632,10 @@ TypeFunction* TypeFunction::CloneWithoutArguments()
 {
   Vector<Type*> emptyArguments;
   Vector<Annotation> emptyAnnotations;
-  return new TypeFunction(m_return_type, m_csu_type, m_varargs,
-                          emptyArguments, NULL,
-                          m_annotations ? *m_annotations : emptyAnnotations);
+  TypeFunction clone(m_return_type, m_csu_type, m_varargs,
+                     emptyArguments, NULL,
+                     m_annotations ? *m_annotations : emptyAnnotations);
+  return (TypeFunction*) g_table.Lookup(clone);
 }
 
 size_t TypeFunction::Width() const
@@ -708,13 +709,6 @@ void TypeFunction::UnPersist()
       m_argument_annotations = NULL;
   }
   UnPersistField(m_annotations);
-}
-
-void TypeFunction::AddAnnotation(String *annType, String *annValue)
-{
-  if (m_annotations == NULL)
-    m_annotations = new Vector<Annotation>();
-  m_annotations->PushBack(Annotation(annType, annValue));
 }
 
 /////////////////////////////////////////////////////////////////////
