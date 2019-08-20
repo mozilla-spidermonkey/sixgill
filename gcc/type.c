@@ -459,6 +459,10 @@ struct XIL_VirtualFunction* XIL_GetFunctionFields(tree type)
       if (!DECL_VIRTUAL_P(method))
         continue;
 
+      // The index has not yet been assigned.
+      if (TREE_CODE(DECL_VINDEX(method)) != INTEGER_CST)
+        continue;
+
       // check if this method overrides a base class method, in which case
       // there is already an entry for it.
       bool excluded = false;
