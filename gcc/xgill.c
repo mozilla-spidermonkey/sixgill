@@ -887,7 +887,7 @@ int plugin_init (struct plugin_name_args *plugin_info,
 {
   if (!plugin_default_version_check(version, &gcc_version)) {
       fprintf(stderr, "ERROR: xgill compiled with %s but running inside %s!\n",
-              version->basever, gcc_version.basever);
+              gcc_version.basever, version->basever);
       return 1;
   }
 
