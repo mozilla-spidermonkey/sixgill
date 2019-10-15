@@ -886,9 +886,25 @@ int plugin_init (struct plugin_name_args *plugin_info,
                  struct plugin_gcc_version *version)
 {
   if (!plugin_default_version_check(version, &gcc_version)) {
-      fprintf(stderr, "ERROR: xgill compiled with %s but running inside %s!\n",
-              gcc_version.basever, version->basever);
-      return 1;
+      if (strcmp(gcc_version.basever, version->basever) != 0) {
+          fprintf(stderr, "ERROR: xgill compiled with %s but running inside %s!\n",
+                  gcc_version.basever, version->basever);
+          return 1;
+      } else {
+          fprintf(stderr,
+                  "WARNING: xgill running under gcc %s was compiled with a different binary. compiled->running:\n"
+                  "  basever: %s->%s\n"
+                  "  datestamp: %s->%s\n"
+                  "  devphase: %s->%s\n"
+                  "  revision: %s->%s\n"
+                  "  config: %s->%s\n",
+                  gcc_version.basever,
+                  gcc_version.basever, version->basever,
+                  gcc_version.datestamp, version->datestamp,
+                  gcc_version.devphase, version->devphase,
+                  gcc_version.revision, version->revision,
+                  gcc_version.configuration_arguments, version->configuration_arguments);
+      }
   }
 
   xil_plugin_path = plugin_info->full_name;
