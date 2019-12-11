@@ -537,6 +537,26 @@ void XIL_AddDataFields(tree type)
   }
 }
 
+static void translate_all_virtual_methods(tree type)
+{
+  // translate all virtual methods defined directly in this type
+  for (method_iterator miter(type); miter; ++miter) {
+    for (ovl_iterator iter(*miter); iter; ++iter) {
+      // the node may or may not be an overload. these handle both cases.
+      tree method = *iter;
+      if (TREE_CODE(method) == FUNCTION_DECL && DECL_VIRTUAL_P(method))
+        XIL_TranslateType(TREE_TYPE(method));
+    }
+  }
+
+  // recurse through base classes
+  for (tree decl = TYPE_FIELDS(type); decl; decl = TREE_CHAIN(decl)) {
+    bool offset_zero;
+    if (TREE_CODE(decl) == FIELD_DECL && XIL_IsBaseField(decl, &offset_zero))
+      translate_all_virtual_methods(TREE_TYPE(decl));
+  }
+}
+
 int xil_generate_record_types = 1;
 
 XIL_Type XIL_TranslateRecordType(tree type)
@@ -637,17 +657,10 @@ XIL_Type XIL_TranslateRecordType(tree type)
 
   // add any virtual functions to the type.
   if (c_dialect_cxx() && CLASS_TYPE_P(type)) {
-    // first generate types for all virtual methods in this class.
-    // the function fields need to be able to get types for these methods
-    // without triggering a reentrant generation for a record type.
-    for (method_iterator miter(type); miter; ++miter) {
-      for (ovl_iterator iter(*miter); iter; ++iter) {
-        // the node may or may not be an overload. these handle both cases.
-        tree method = *iter;
-        if (TREE_CODE(method) == FUNCTION_DECL && DECL_VIRTUAL_P(method))
-          XIL_TranslateType(TREE_TYPE(method));
-      }
-    }
+    // First generate types for all virtual methods in this class and its base
+    // classes. The function fields need to be able to get types for these
+    // methods without triggering a reentrant generation for a record type.
+    translate_all_virtual_methods(type);
 
     // add function fields for each virtual method in the type.
     struct XIL_VirtualFunction *virt = XIL_GetFunctionFields(type);
