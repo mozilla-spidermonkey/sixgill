@@ -334,6 +334,7 @@ void XIL_CFGSetEntryPoint(XIL_PPoint point);
 void XIL_CFGSetExitPoint(XIL_PPoint point);
 void XIL_CFGAddLoopHead(XIL_PPoint point, XIL_Location end_loc);
 
+// Simple transfer of control from source -> target
 void XIL_CFGEdgeSkip(XIL_PPoint source, XIL_PPoint target);
 void XIL_CFGEdgeAssume(XIL_PPoint source, XIL_PPoint target,
                        XIL_Exp condition, int nonzero);
