@@ -50,14 +50,14 @@ namespace XdbFile {
 
   struct StreamLayout
   {
-    uint32_t id;
-    uint64_t offset;
-    uint32_t size;
-    uint32_t length;
-    uint32_t prev_id;
-    uint32_t next_id;
+    uint32_t id = 0;
+    uint64_t offset = 0;
+    uint32_t size = 0;
+    uint32_t length = 0;
+    uint32_t prev_id = 0;
+    uint32_t next_id = 0;
 
-    StreamLayout();
+    StreamLayout() = default;
     void Read(Buffer *buf);
     void Write(Buffer *buf) const;
   };
@@ -97,18 +97,18 @@ namespace XdbFile {
 
   struct FileHeader
   {
-    uint32_t magic;
-    uint32_t version;
-    uint32_t header_size;
-    uint64_t file_size;
-    uint32_t data_stream_count;
-    uint32_t hash_method;
+    uint32_t magic = 0;
+    uint32_t version = 0;
+    uint32_t header_size = 0;
+    uint64_t file_size = 0;
+    uint32_t data_stream_count = 0;
+    uint32_t hash_method = 0;
     StreamLayout hash_stream;
     StreamLayout key_stream;
-    uint32_t first_id;
-    uint32_t last_id;
+    uint32_t first_id = 0;
+    uint32_t last_id = 0;
 
-    FileHeader();
+    FileHeader() = default;
     void Read(Buffer *buf);
     void Write(Buffer *buf) const;
   };
@@ -127,10 +127,10 @@ namespace XdbFile {
 
   struct HashStreamEntry
   {
-    uint32_t hash_value;
-    uint32_t key_offset;
+    uint32_t hash_value = 0;
+    uint32_t key_offset = 0;
 
-    HashStreamEntry();
+    HashStreamEntry() = default;
     void Read(Buffer *buf);
     void Write(Buffer *buf) const;
   };
@@ -165,10 +165,10 @@ namespace XdbFile {
     StreamLayout data_stream;
 
     // allocated with new[] by Read()
-    uint8_t *key;
-    uint32_t key_length;
+    uint8_t *key = nullptr;
+    uint32_t key_length = 0;
 
-    KeyStreamEntry();
+    KeyStreamEntry() = default;
     void Read(Buffer *buf);
     void Write(Buffer *buf) const;
   };

@@ -28,11 +28,6 @@ TrackAlloc g_alloc_XdbStreamInfoKey("StreamInfoKey");
 // StreamLayout
 /////////////////////////////////////////////////////////////////////
 
-XdbFile::StreamLayout::StreamLayout()
-{
-  memset(this, 0, sizeof(*this));
-}
-
 void XdbFile::StreamLayout::Read(Buffer *buf)
 {
   if (!buf->HasRemaining(XDB_STREAM_LAYOUT_SIZE))
@@ -61,11 +56,6 @@ void XdbFile::StreamLayout::Write(Buffer *buf) const
 /////////////////////////////////////////////////////////////////////
 // FileHeader
 /////////////////////////////////////////////////////////////////////
-
-XdbFile::FileHeader::FileHeader()
-{
-  memset(this, 0, sizeof(*this));
-}
 
 void XdbFile::FileHeader::Read(Buffer *buf)
 {
@@ -102,11 +92,6 @@ void XdbFile::FileHeader::Write(Buffer *buf) const
 // HashStreamEntry
 /////////////////////////////////////////////////////////////////////
 
-XdbFile::HashStreamEntry::HashStreamEntry()
-{
-  memset(this, 0, sizeof(*this));
-}
-
 void XdbFile::HashStreamEntry::Read(Buffer *buf)
 {
   if (!buf->HasRemaining(8))
@@ -125,11 +110,6 @@ void XdbFile::HashStreamEntry::Write(Buffer *buf) const
 /////////////////////////////////////////////////////////////////////
 // KeyStreamEntry
 /////////////////////////////////////////////////////////////////////
-
-XdbFile::KeyStreamEntry::KeyStreamEntry()
-{
-  memset(this, 0, sizeof(*this));
-}
 
 void XdbFile::KeyStreamEntry::Read(Buffer *buf)
 {
