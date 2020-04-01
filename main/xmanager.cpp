@@ -245,8 +245,6 @@ void handle_event(int fd, short, void *v)
 
 void handle_connect(int sockfd, short, void*)
 {
-  logout << "Received connection." << endl << flush;
-
   int newfd = accept(sockfd, NULL, 0);
   if (newfd == -1) {
     logout << "ERROR: accept() failure: " << errno << endl;
