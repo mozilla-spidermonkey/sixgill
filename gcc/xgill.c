@@ -683,6 +683,17 @@ void gcc_plugin_attributes(void *gcc_data, void *user_data)
   register_attribute(&annotation_return_attribute);
   register_attribute(&annotation_local_attribute);
   register_attribute(&annotation_source_attribute);
+
+  // Also allow the syntax [[moz::annotate("...")]], which is (1) spec'ed as
+  // being ignored if unrecognized, (2) more flexible in where it may be
+  // placed, (3) defined by the c++ standard, and therefore (4) usable in the
+  // same way across gcc and clang, and independent of preprocessor directives.
+  static struct attribute_spec Attrs[] = {
+#define MAKE_NS_ATTR(NAME, _2, _3) NAME##_attribute,
+    XIL_ITERATE_ANNOT(MAKE_NS_ATTR)
+#undef MAKE_NS_ATTR
+    NULL };
+  register_scoped_attributes(Attrs, "moz");
 }
 
 void gcc_plugin_pre_genericize(void *gcc_data, void *user_data)
