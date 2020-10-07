@@ -102,8 +102,7 @@ function build() {
 
 function run_test() {
   echo '------------ running tests ---------------'
-  [ -x "$PYTHON" ] || PYTHON=python2.7
-  ( cd test; $PYTHON run-test.py )
+  ( cd test; ${PYTHON:-python3} run-test.py )
 }
 
 function make_checksum() {

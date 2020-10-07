@@ -7,8 +7,14 @@ topdir = os.path.abspath(os.path.join(os.path.abspath(os.path.dirname(__file__))
 bindir = os.path.join(topdir, "bin")
 plugin = os.path.join(topdir, "gcc", "xgill.so")
 
+
+def execfile(thefile, globals=None):
+    exec(__builtins__.compile(open(thefile).read(), thefile, "exec"), globals)
+
+
 if not os.path.exists("test-output"):
     os.mkdir("test-output")
+
 
 # Simplified version of the body info.
 class Body(dict):
@@ -66,6 +72,7 @@ class Body(dict):
     def assignment_line(self, varname):
         return self['Points'][self.assignment_point(varname)]
 
+
 tests = ['gchazard']
 for name in tests:
     indir = os.path.join(topdir, "test", name)
@@ -78,25 +85,26 @@ for name in tests:
                                                             CXX=os.environ.get("CXX", os.environ.get("CC", "@TARGET_CC@")),
                                                             sixgill=plugin)
         print("Running %s" % cmd)
+        os.environ['CCACHE_DISABLE'] = '1'
         os.system(cmd)
 
     def load_db_entry(dbname, pattern):
-        output = check_output([os.path.join(bindir, "xdbkeys"), dbname + ".xdb"])
+        output = check_output([os.path.join(bindir, "xdbkeys"), dbname + ".xdb"], universal_newlines=True)
         entries = output.splitlines()
         matches = [f for f in entries if re.search(pattern, f)]
         if len(matches) == 0:
-            raise Exception("entry not found")
+            raise Exception(f"entry /{pattern.pattern}/ not found in {dbname}")
         if len(matches) > 1:
-            raise Exception("multiple entries found")
+            raise Exception(f"multiple entries found for /{pattern.pattern}/ in {dbname}")
 
-        output = check_output([os.path.join(bindir, "xdbfind"), "-json", dbname + ".xdb", matches[0]])
+        output = check_output([os.path.join(bindir, "xdbfind"), "-json", dbname + ".xdb", matches[0]], universal_newlines=True)
         return json.loads(output)
 
     def process_body(body):
         return Body(body)
 
     def process_bodies(bodies):
-        return [ process_body(b) for b in bodies ]
+        return [process_body(b) for b in bodies]
 
     def equal(got, expected):
         if got != expected:
