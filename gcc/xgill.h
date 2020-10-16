@@ -75,6 +75,16 @@ EXTERN_END
 // eg gcc 8.3.1 maps to 80301
 #define GCC_VERSION_NUMBER (__GNUC__ * 10000 + __GNUC_MINOR__ * 100 + __GNUC_PATCHLEVEL__)
 
+#if GCC_VERSION_NUMBER < 70000 || GCC_VERSION_NUMBER >= 80000
+// gcc 7.3.0 has a bug that will crash on converting a certain template
+// parameter to a string. Not chasing typedefs will make template
+// instantiations have somewhat bogus types and so may not match other
+// instantiations of the same type.
+#  define TFF_CHASE_TYPEDEF_IF_SAFE TFF_CHASE_TYPEDEF
+#else
+#  define TFF_CHASE_TYPEDEF_IF_SAFE 0
+#endif
+
 // See imlang/type.h
 #define VARIANT_NONE 0
 #define VARIANT_BOOL 1

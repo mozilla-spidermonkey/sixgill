@@ -330,16 +330,7 @@ const char* XIL_CSUName(tree type, const char *name)
 
   // template instantiations do not have names filled in. get one now.
   if (c_dialect_cxx() && !*field_csu && CLASS_TYPE_P(type) && CLASSTYPE_USE_TEMPLATE(type)) {
-#if GCC_VERSION_NUMBER >= 70000 && GCC_VERSION_NUMBER < 80000
-    // gcc 7.3.0 has a bug that will crash on converting a certain template
-    // parameter to a string. Not chasing typedefs will make template
-    // instantiations have somewhat bogus types and so may not match other
-    // instantiations of the same type.
-    const char *new_name = type_as_string(type, 0);
-#else
-    const char *new_name = type_as_string(type, TFF_CHASE_TYPEDEF);
-#endif
-    *field_csu = XIL_TypeCSU(new_name, NULL);
+    *field_csu = XIL_TypeCSU(type_as_string(type, TFF_CHASE_TYPEDEF_IF_SAFE), NULL);
   }
 
   // cp uses TYPE_DECLs for structures with explicit names, as the
