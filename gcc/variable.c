@@ -113,10 +113,7 @@ GlobalName(tree decl)
   if (!TREE_PUBLIC(decl) || strcmp(name, "main") == 0) {
     // get the filename (excluding directories) of the source file.
     const char *file = DECL_SOURCE_FILE(decl);
-    while (strchr(file, '/') != NULL)
-      file = strchr(file, '/') + 1;
-
-    return ColonPrefix(file, name);
+    return ColonPrefix(XIL_Basename(file), name);
   }
 
   full_name.str = name;

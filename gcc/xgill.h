@@ -423,7 +423,9 @@ struct XIL_CString
     int owned;
 };
 
-// set a XUL_CString to a new value, releasing the old one if needed.
+const char* XIL_Basename(const char* path);
+
+// set a XIL_CString to a new value, releasing the old one if needed.
 void XIL_SetCString(struct XIL_CString *xstr, const char *str, int owned);
 
 // assign one string to another, transferring ownership if needed.

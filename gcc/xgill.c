@@ -88,6 +88,13 @@ void XIL_SetCString(struct XIL_CString *xstr, const char *str, int owned)
   xstr->owned = owned;
 }
 
+const char* XIL_Basename(const char* file)
+{
+  while (strchr(file, '/') != NULL)
+    file = strchr(file, '/') + 1;
+  return file;
+}
+
 void XIL_DebugPrint(tree node)
 {
   fflush(stdout);

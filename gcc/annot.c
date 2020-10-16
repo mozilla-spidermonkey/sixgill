@@ -225,7 +225,8 @@ static void XIL_AddDecl(tree decl)
   if (!name && c_dialect_cxx() &&
       (TREE_CODE(type) == RECORD_TYPE || TREE_CODE(type) == UNION_TYPE) &&
       CLASSTYPE_USE_TEMPLATE(TREE_TYPE(decl))) {
-    name = (const char *) xmalloc(30); artificial = true;
+    name = (const char *) xmalloc(30);
+    artificial = true;
     sprintf((char*)name, "__template%d", ++state->artificial_count);
   }
 
