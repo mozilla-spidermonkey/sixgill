@@ -1,3 +1,6 @@
+# Check whether we can link with cc1, not just cc1plus.
+compile("source.c")
+
 compile("rooting.cpp")
 body = process_body(load_db_entry("src_body", re.compile(r'root_arg'))[0])
 
