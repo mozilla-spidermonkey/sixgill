@@ -77,6 +77,58 @@ void XIL_AssignCString(struct XIL_CString *dst, struct XIL_CString *src)
   src->owned = false;
 }
 
+XIL_CString XIL_ConcatCString(struct XIL_CString *a, struct XIL_CString *b) {
+    struct XIL_CString dst = { NULL, false };
+    if (!a->str) {
+        XIL_AssignCString(a, b);
+        dst = *a;
+        a->owned = false;
+        return dst;
+    }
+
+    size_t alen = strlen(a->str);
+    size_t rlen = alen + strlen(b->str) + 1;
+    char* str = (char*) xmalloc(rlen);
+    memcpy(str, a->str, alen);
+    strcpy(str + alen, b->str);
+    dst.str = str;
+    dst.owned = true;
+    return dst;
+}
+
+void XIL_AppendCString(struct XIL_CString *a, struct XIL_CString *b) {
+    if (!b->str) {
+        return;
+    }
+
+    if (!a->str) {
+        *a = *b;
+        b->owned = false;
+        return;
+    }
+
+    struct XIL_CString dst = { NULL, false };
+    size_t alen = strlen(a->str);
+    size_t rlen = alen + strlen(b->str) + 1;
+    if (a->owned) {
+        dst = *a;
+        char* str = (char*) xrealloc((void*) dst.str, rlen);
+        strcpy(str + alen, b->str);
+        dst.str = str;
+        dst.owned = true;
+    } else {
+        dst = XIL_ConcatCString(a, b);
+        XIL_ReleaseCString(a);
+    }
+    *a = dst;
+    XIL_ReleaseCString(b);
+}
+
+void XIL_AppendString(struct XIL_CString *dst, const char *str) {
+    struct XIL_CString src = { str, false };
+    XIL_AppendCString(dst, &src);
+}
+
 void XIL_SetCString(struct XIL_CString *xstr, const char *str, int owned)
 {
   if (xstr->str == str) {

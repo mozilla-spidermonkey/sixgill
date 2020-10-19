@@ -198,8 +198,117 @@ bool XIL_IsSelfTypeDecl(tree decl)
   return false;
 }
 
+static struct XIL_CString render_decl(tree decl);
+
+static struct XIL_CString
+render_template_argument(tree arg)
+{
+    struct XIL_CString dst = { NULL, false };
+    if (ARGUMENT_PACK_P(arg)) {
+        // TODO: bug 1673114
+        XIL_SetCString(&dst, "...", false);
+        return dst;
+    }
+
+    if (TYPE_P(arg) || TREE_CODE(arg) == TEMPLATE_DECL) {
+        // *_as_string return strings owned by gcc tree nodes.
+        XIL_SetCString(&dst, type_as_string(arg, TFF_CHASE_TYPEDEF_IF_SAFE), false);
+        return dst;
+    }
+
+    XIL_SetCString(&dst, expr_as_string(arg, TFF_CHASE_TYPEDEF), false);
+    return dst;
+}
+
+static struct XIL_CString
+render_template_sequence(tree info, bool is_primary)
+{
+    struct XIL_CString dst = { NULL, false };
+    int ii;
+
+    if (is_primary) {
+        // Render template parameters.
+        tree tpl = TI_TEMPLATE(info);
+        tree parms = DECL_TEMPLATE_PARMS(tpl);
+        if (TREE_CODE(parms) != TREE_LIST)
+            return dst;
+        parms = TREE_VALUE(parms);
+        int len = TREE_VEC_LENGTH(parms);
+        for (ii = 0; ii < len; ii++) {
+            if (ii > 0) XIL_AppendString(&dst, ", ");
+            tree parm = TREE_VEC_ELT(parms, ii);
+            if (parm == error_mark_node) {
+                XIL_AppendString(&dst, "<error>");
+            } else {
+                parm = TREE_VALUE(parm);
+                struct XIL_CString parmstr = render_decl(parm);
+                XIL_AppendCString(&dst, &parmstr);
+            }
+        }
+        return dst;
+    }
+
+    // Render template arguments.
+    tree args = INNERMOST_TEMPLATE_ARGS(TI_ARGS(info));
+    int nondefault = GET_NON_DEFAULT_TEMPLATE_ARGS_COUNT(args);
+
+    for (ii = 0; ii < nondefault; ii++) {
+        tree arg = TREE_VEC_ELT(args, ii);
+        if (ARGUMENT_PACK_P(arg)
+            && TREE_VEC_LENGTH(ARGUMENT_PACK_ARGS(arg)) == 0)
+        {
+            continue; // Empty template argument pack
+        }
+        if (ii > 0) XIL_AppendString(&dst, ",");
+        struct XIL_CString argstr = render_template_argument(arg);
+        XIL_AppendCString(&dst, &argstr);
+    }
+
+    return dst;
+}
+
+// Incomplete, hacky version of decl_as_string, to avoid decl_as_string crash
+// bugs.
+static struct XIL_CString
+render_decl(tree decl)
+{
+    struct XIL_CString str = { NULL, false };
+
+    int stringify_flags = TFF_CHASE_TYPEDEF | TFF_UNQUALIFIED_NAME;
+    if (TREE_CODE(decl) != TYPE_DECL) {
+        // I have not (yet) observed crashes in decl_as_string for other decls.
+        XIL_SetCString(&str, decl_as_string(decl, stringify_flags), false);
+        return str;
+    }
+    tree type = TREE_TYPE(decl);
+
+    if (DECL_NAME(decl)) {
+        XIL_SetCString(&str, IDENTIFIER_POINTER(DECL_NAME(decl)), 0);
+    } else {
+        // Again, fall back to the "real" implementation where it has not been
+        // observed to cause problems. An example of what would need to be
+        // handled here for completeness is TEMPLATE_TYPE_PARM.
+        XIL_SetCString(&str, decl_as_string(decl, stringify_flags), false);
+    }
+
+    bool is_template =
+        TYPE_LANG_SPECIFIC(type) && CLASSTYPE_TEMPLATE_INFO(type);
+    if (!is_template) {
+        return str;
+    }
+
+    bool is_primary = !CLASSTYPE_USE_TEMPLATE(type);
+    XIL_AppendString(&str, "<");
+    tree info = TYPE_TEMPLATE_INFO(type);
+    struct XIL_CString list = render_template_sequence(info, is_primary);
+    XIL_AppendCString(&str, &list);
+    XIL_AppendString(&str, ">");
+    return str;
+}
+
 struct XIL_CString XIL_QualifiedName(tree decl)
 {
+  gcc_assert(DECL_P(decl));
   struct XIL_CString name = { NULL, false };
 
   if (TREE_CODE(decl) != TYPE_DECL && TREE_CODE(decl) != NAMESPACE_DECL) {
@@ -208,7 +317,7 @@ struct XIL_CString XIL_QualifiedName(tree decl)
     return name;
   }
 
-  name.str = IDENTIFIER_POINTER(DECL_NAME(decl));
+  name = render_decl(decl);
 
   tree context = DECL_CONTEXT(decl);
   if (!context || TREE_CODE(context) == TRANSLATION_UNIT_DECL)

@@ -441,6 +441,17 @@ void XIL_SetCString(struct XIL_CString *xstr, const char *str, int owned);
 // assign one string to another, transferring ownership if needed.
 void XIL_AssignCString(struct XIL_CString *dst, struct XIL_CString *src);
 
+// concatenate two strings together. The return value is owned. The inputs are
+// left unmodified and no ownership is transferred.
+XIL_CString XIL_ConcatCString(struct XIL_CString *a, struct XIL_CString *b);
+
+// append a XIL_CString onto another, consuming the `src` string.
+void XIL_AppendCString(struct XIL_CString *dst, struct XIL_CString *src);
+
+// append a string onto a destination XIL_CString, without taking ownership of
+// `str`.
+void XIL_AppendString(struct XIL_CString *dst, const char *str);
+
 // free up a string, if owned.
 void XIL_ReleaseCString(struct XIL_CString *xstr);
 
