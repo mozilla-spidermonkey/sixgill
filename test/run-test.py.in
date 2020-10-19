@@ -1,6 +1,7 @@
+import json
 import os
 import re
-import json
+import typing
 from subprocess import check_output
 
 topdir = os.path.abspath(os.path.join(os.path.abspath(os.path.dirname(__file__)), ".."))
@@ -73,7 +74,7 @@ class Body(dict):
         return self['Points'][self.assignment_point(varname)]
 
 
-tests = ['gchazard']
+tests = ['gchazard', 'gccbugs']
 for name in tests:
     indir = os.path.join(topdir, "test", name)
     outdir = os.path.join(topdir, "test", "test-output", name)
@@ -84,16 +85,22 @@ for name in tests:
         cmd = "{CXX} -c {source} -fplugin={sixgill}".format(source=os.path.join(indir, source),
                                                             CXX=os.environ.get("CXX", os.environ.get("CC", "@TARGET_CC@")),
                                                             sixgill=plugin)
+        if source.endswith(".cpp"):
+            cmd += " -std=c++17"
         print("Running %s" % cmd)
         os.environ['CCACHE_DISABLE'] = '1'
         os.system(cmd)
 
-    def load_db_entry(dbname, pattern):
+    def load_db_entry(dbname, pattern, require=True):
         output = check_output([os.path.join(bindir, "xdbkeys"), dbname + ".xdb"], universal_newlines=True)
         entries = output.splitlines()
+        if not isinstance(pattern, typing.re.Pattern):
+            pattern = re.compile(r'^' + pattern + '$')
         matches = [f for f in entries if re.search(pattern, f)]
         if len(matches) == 0:
-            raise Exception(f"entry /{pattern.pattern}/ not found in {dbname}")
+            if require:
+                raise Exception(f"entry /{pattern.pattern}/ not found in {dbname}")
+            return []
         if len(matches) > 1:
             raise Exception(f"multiple entries found for /{pattern.pattern}/ in {dbname}")
 
