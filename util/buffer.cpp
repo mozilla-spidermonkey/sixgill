@@ -22,6 +22,8 @@
 #include <unistd.h>
 #include <errno.h>
 
+#include <limits>
+
 NAMESPACE_XGILL_BEGIN
 
 #ifdef TRACK_BUFFER_MEMORY
@@ -1071,29 +1073,46 @@ tag_t PeekOpenTag(Buffer *buf)
 // Packet methods
 /////////////////////////////////////////////////////////////////////
 
+static ssize_t ReadBytes(int fd, uint8_t* output, size_t nbytes, FILE* logfile)
+{
+  size_t read_size = 0;
+
+  while (read_size < nbytes) {
+    size_t needed = nbytes - read_size;
+
+    ssize_t nread;
+    do {
+      nread = read(fd, output, needed);
+    } while (nread == -1 && errno == EINTR);
+
+    if (nread == -1) {
+      fprintf(logfile, "ERROR: read() failure: %d\n", errno);
+      return -1;
+    } else if (nread == 0) {
+      return 0;
+    }
+    output += nread;
+    read_size += nread;
+  }
+
+  return read_size;
+}
+
 bool ReadPacket(int fd, Buffer *output)
 {
   size_t read_size = output->pos - output->base;
 
   if (read_size < UINT32_LENGTH) {
     size_t needed = UINT32_LENGTH - read_size;
-
     output->Ensure(needed);
-    ssize_t ret = read(fd, output->pos, needed);
-
-    if (ret == -1) {
-      fprintf(logfile, "ERROR: read() failure: %d\n", errno);
+    ssize_t nread = ReadBytes(fd, output->pos, needed, logfile);
+    if (nread < ssize_t(needed))
       return false;
-    }
-    output->pos += ret;
+    output->pos += nread;
+    read_size += nread;
   }
 
-  read_size = output->pos - output->base;
-
-  if (read_size < UINT32_LENGTH) {
-    // partial read of the length data
-    return false;
-  }
+  Assert(read_size == size_t(output->pos - output->base));
 
   uint32_t data_length = 0;
 
@@ -1103,17 +1122,21 @@ bool ReadPacket(int fd, Buffer *output)
     return false;
   }
 
-  size_t needed = UINT32_LENGTH + data_length - read_size;
-
-  output->Ensure(needed);
-  ssize_t ret = read(fd, output->pos, needed);
-  if (ret == -1) {
-    fprintf(logfile, "ERROR: read() failure: %d\n", errno);
-    return false;
+  if (read_size < UINT32_LENGTH + data_length) {
+    size_t needed = UINT32_LENGTH + data_length - read_size;
+    output->Ensure(needed);
+    ssize_t nread = ReadBytes(fd, output->pos, needed, logfile);
+    if (needed > std::numeric_limits<ssize_t>::max()) {
+      fprintf(logfile, "ERROR: Invalid packet size\n");
+      return false;
+    }
+    if (nread < ssize_t(needed))
+      return false;
+    output->pos += nread;
+    read_size += nread;
   }
-  output->pos += ret;
 
-  return (ret == (ssize_t) needed);
+  return true;
 }
 
 bool WritePacket(int fd, Buffer *input)

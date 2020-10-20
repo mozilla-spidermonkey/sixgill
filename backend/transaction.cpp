@@ -538,9 +538,11 @@ void SubmitTransaction(Transaction *t)
     remote_buf.Reset();
 
     // keep reading and blocking until we get a response.
-    do {
-      success = ReadPacket(remotefd, &remote_buf);
-    } while (!success);
+    success = ReadPacket(remotefd, &remote_buf);
+    if (!success) {
+      logout << "ERROR: Could not read entire transaction." << endl;
+      Assert(false);
+    }
 
     size_t data_length = remote_buf.pos - remote_buf.base - UINT32_LENGTH;
 
