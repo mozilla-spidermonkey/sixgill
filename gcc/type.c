@@ -32,7 +32,17 @@ XIL_Type XIL_TranslateIntType(tree type)
     TREE_UNEXPECTED(type);
 
   int sign = !(TYPE_UNSIGNED(type));
-  return XIL_TypeInt(bytes, sign);
+
+  while (typedef_variant_p(type)) {
+    tree decl = TYPE_NAME(type);
+    if (strcmp(IDENTIFIER_POINTER(DECL_NAME(decl)), "bool") == 0)
+      return XIL_TypeInt(bytes, sign, VARIANT_BOOL);
+    if (strcmp(IDENTIFIER_POINTER(DECL_NAME(decl)), "size_t") == 0)
+      return XIL_TypeInt(bytes, sign, VARIANT_SIZE_T);
+    type = DECL_ORIGINAL_TYPE(decl);
+  }
+
+  return XIL_TypeInt(bytes, sign, VARIANT_NONE);
 }
 
 XIL_Type XIL_TranslateRealType(tree type)

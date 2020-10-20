@@ -27,6 +27,10 @@
 
 NAMESPACE_XGILL_BEGIN
 
+static constexpr size_t VARIANT_NONE = 0;
+static constexpr size_t VARIANT_BOOL = 1;
+static constexpr size_t VARIANT_SIZE_T = 2;
+
 #define ITERATE_TYPE_KINDS(ITER)		\
   ITER(Error, 1)				\
   ITER(Void, 2)					\
@@ -78,7 +82,7 @@ class Type : public HashObject
 
   static TypeError*    MakeError();
   static TypeVoid*     MakeVoid();
-  static TypeInt*      MakeInt(size_t width, bool sign);
+  static TypeInt*      MakeInt(size_t width, bool sign, size_t variant);
   static TypeFloat*    MakeFloat(size_t width);
   static TypePointer*  MakePointer(Type *target_type, size_t width);
   static TypeArray*    MakeArray(Type *element_type, size_t element_count);
@@ -113,6 +117,10 @@ class Type : public HashObject
   // get whether this type is signed or not. some integer types and
   // all float types are signed, other types are unsigned.
   virtual bool IsSigned() const { return false; }
+
+  // integer types will sometimes provide a more specific type than their width
+  // and signedness can describe (eg bool, size_t)
+  virtual size_t Variant() const { return VARIANT_NONE; }
 
  protected:
   TypeKind m_kind;
@@ -157,13 +165,15 @@ class TypeInt : public Type
   // inherited methods
   size_t Width() const;
   bool IsSigned() const;
+  size_t Variant() const;
   void Print(OutStream &out) const;
 
  private:
   size_t m_width;
   bool m_sign;
+  int m_variant; // Some types (bool, size_t) preserve their original names.
 
-  TypeInt(size_t width, bool sign);
+  TypeInt(size_t width, bool sign, size_t variant);
   friend class Type;
 };
 

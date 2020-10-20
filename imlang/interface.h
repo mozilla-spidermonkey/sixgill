@@ -141,7 +141,7 @@ void XIL_ClearActiveBlock(int drop);
 
 XIL_Type XIL_TypeError();
 XIL_Type XIL_TypeVoid();
-XIL_Type XIL_TypeInt(int width, int sign);
+XIL_Type XIL_TypeInt(int width, int sign, int variant);
 XIL_Type XIL_TypeFloat(int width);
 XIL_Type XIL_TypePointer(XIL_Type target_type, int width);
 XIL_Type XIL_TypeArray(XIL_Type element_type, int count);

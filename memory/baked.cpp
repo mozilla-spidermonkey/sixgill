@@ -275,7 +275,7 @@ static inline Exp* GetReturnedValue()
 // get the char* null terminator of exp.
 static inline Exp* GetNullTerminate(Exp *exp)
 {
-  Type *type = Type::MakeInt(1, true);
+  Type *type = Type::MakeInt(1, true, VARIANT_NONE);
   Exp *terminate_test = Exp::MakeEmpty();
   ExpInt *terminate_int = Exp::MakeInt(0);
 
@@ -285,14 +285,14 @@ static inline Exp* GetNullTerminate(Exp *exp)
 // get the byte upper bound of exp.
 static inline Exp* GetByteUpperBound(Exp *exp)
 {
-  Type *type = Type::MakeInt(1, true);
+  Type *type = Type::MakeInt(1, true, VARIANT_NONE);
   return Exp::MakeBound(BND_Upper, exp, type);
 }
 
 // get the byte offset of exp.
 static inline Exp* GetByteOffset(Exp *exp)
 {
-  Type *type = Type::MakeInt(1, true);
+  Type *type = Type::MakeInt(1, true, VARIANT_NONE);
   return Exp::MakeBound(BND_Offset, exp, type);
 }
 
@@ -317,7 +317,7 @@ bool GetAllocationFunction(Variable *name, Exp **object, Exp **size)
       return true;
     }
 
-    cur_fixed++; 
+    cur_fixed++;
   }
 
   CallocFunctionInfo *cur_calloc = g_calloc_functions;
@@ -735,7 +735,7 @@ void FillBakedSummary(BlockSummary *sum)
 
       Type *type = NULL;
       if (IsPointerBinop(cur_return->binop))
-        type = Type::MakeInt(1, true);
+        type = Type::MakeInt(1, true, VARIANT_NONE);
 
       Bit *bit = Exp::MakeCompareBit(cur_return->binop,
                                      ret_exp, arg_exp, type);

@@ -34,6 +34,7 @@
 //   TAG_Kind (all)
 //   TAG_Width (all)
 //   TAG_Sign (all)
+//   TAG_Variant (int)
 //   TAG_Name (csu)
 //   TAG_Type (pointer, array, function)
 //   TAG_Count (array)

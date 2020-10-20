@@ -418,9 +418,9 @@ extern "C" XIL_Type XIL_TypeVoid()
   return (XIL_Type) Type::MakeVoid();
 }
 
-extern "C" XIL_Type XIL_TypeInt(int width, int sign)
+extern "C" XIL_Type XIL_TypeInt(int width, int sign, int variant)
 {
-  return (XIL_Type) Type::MakeInt((size_t) width, (size_t) sign);
+  return (XIL_Type) Type::MakeInt((size_t) width, (size_t) sign, (size_t) variant);
 }
 
 extern "C" XIL_Type XIL_TypeFloat(int width)
@@ -712,8 +712,10 @@ extern "C" const char * XIL_MaybeDecorateFunction(const char *name, XIL_Type typ
 
   out << closeParentheses;
 
-  //logout << "TRANSFORM BEFORE " << name << endl;
-  //logout << "TRANSFORM AFTER  " << out.Base() << endl;
+  if (strcmp(name, out.Base())) {
+    //logout << "TRANSFORM BEFORE " << name << endl;
+    //logout << "TRANSFORM AFTER  " << out.Base() << endl;
+  }
 
   return out.Base();
 }

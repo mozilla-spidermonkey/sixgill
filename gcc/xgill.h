@@ -75,6 +75,11 @@ EXTERN_END
 // eg gcc 8.3.1 maps to 80301
 #define GCC_VERSION_NUMBER (__GNUC__ * 10000 + __GNUC_MINOR__ * 100 + __GNUC_PATCHLEVEL__)
 
+// See imlang/type.h
+#define VARIANT_NONE 0
+#define VARIANT_BOOL 1
+#define VARIANT_SIZE_T 2
+
 #ifndef VEC
 # define VEC(T,U) vec<T,va_gc>
 # define VEC_iterate(T,V,I,P) (V)->iterate((I), &(P))

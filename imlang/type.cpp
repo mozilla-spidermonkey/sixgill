@@ -113,6 +113,8 @@ int Type::Compare(const Type *y0, const Type *y1)
   case YK_Error:
     break;
   case YK_Int:
+    TryCompareValues(y0->Variant(), y1->Variant());
+    /* fallthrough */
   case YK_Float:
     TryCompareValues(y0->Width(), y1->Width());
     TryCompareValues((int)y0->IsSigned(), (int)y1->IsSigned());
@@ -199,6 +201,8 @@ void Type::Write(Buffer *buf, const Type *y)
     WriteTagUInt32(buf, TAG_Width, y->Width());
     if (y->IsSigned())
       WriteTagEmpty(buf, TAG_Sign);
+    if (y->Variant())
+      WriteTagUInt32(buf, TAG_Variant, y->Variant());
     break;
   case YK_Float:
     WriteTagUInt32(buf, TAG_Width, y->Width());
@@ -268,6 +272,7 @@ Type* Type::Read(Buffer *buf)
   uint32_t kind = 0;
   uint32_t width = 0;
   uint32_t count = 0;
+  uint32_t variant = 0;
   bool sign = false;
   bool varargs = false;
   bool have_arg_annotations = false;
@@ -293,6 +298,10 @@ Type* Type::Read(Buffer *buf)
     case TAG_Sign: {
       Try(ReadTagEmpty(buf, TAG_Sign));
       sign = true;
+      break;
+    }
+    case TAG_Variant: {
+      Try(ReadTagUInt32(buf, TAG_Variant, &variant));
       break;
     }
     case TAG_Name: {
@@ -364,7 +373,7 @@ Type* Type::Read(Buffer *buf)
   case YK_Void:
     return MakeVoid();
   case YK_Int:
-    return MakeInt(width, sign);
+    return MakeInt(width, sign, variant);
   case YK_Float:
     return MakeFloat(width);
   case YK_Pointer:
@@ -396,8 +405,8 @@ TypeVoid* Type::MakeVoid() {
   return (TypeVoid*) g_table.Lookup(xy);
 }
 
-TypeInt* Type::MakeInt(size_t width, bool sign) {
-  TypeInt xy(width, sign);
+TypeInt* Type::MakeInt(size_t width, bool sign, size_t variant) {
+  TypeInt xy(width, sign, variant);
   return (TypeInt*) g_table.Lookup(xy);
 }
 
@@ -453,10 +462,10 @@ void TypeVoid::Print(OutStream &out) const
 // TypeInt
 /////////////////////////////////////////////////////////////////////
 
-TypeInt::TypeInt(size_t width, bool sign)
-  : Type(YK_Int), m_width(width), m_sign(sign)
+TypeInt::TypeInt(size_t width, bool sign, size_t variant)
+   : Type(YK_Int), m_width(width), m_sign(sign), m_variant(variant)
 {
-  m_hash = Hash32(m_hash, m_width * 2 + (m_sign ? 1 : 0));
+  m_hash = Hash32(m_hash, m_width * 2 + (m_sign ? 1 : 0) + (m_variant << 16));
 }
 
 size_t TypeInt::Width() const
@@ -469,9 +478,19 @@ bool TypeInt::IsSigned() const
   return m_sign;
 }
 
+size_t TypeInt::Variant() const
+{
+  return m_variant;
+}
+
 void TypeInt::Print(OutStream &out) const
 {
-  out << (m_sign ? "int" : "uint") << (long) (m_width * 8);
+  if (m_variant == VARIANT_BOOL)
+    out << "bool";
+  else if (m_variant == VARIANT_SIZE_T)
+    out << "size_t";
+  else
+    out << (m_sign ? "int" : "uint") << (long) (m_width * 8);
 }
 
 /////////////////////////////////////////////////////////////////////

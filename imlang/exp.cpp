@@ -674,11 +674,11 @@ static inline Type* NormalizeType(Type *type)
 {
   // convert void to signed char.
   if (type->IsVoid())
-    return Type::MakeInt(1, true);
+    return Type::MakeInt(1, true, VARIANT_NONE);
 
   // convert unsigned integers to signed.
   if (type->IsInt() && !type->IsSigned())
-    return Type::MakeInt(type->Width(), true);
+    return Type::MakeInt(type->Width(), true, VARIANT_NONE);
 
   // convert all pointers to void*.
   if (TypePointer *ntype = type->IfPointer()) {
@@ -847,7 +847,7 @@ Exp* Exp::MakeString(String *str)
   const char *data = str->Value();
   size_t len = strlen(data);
 
-  Type *elem_type = Type::MakeInt(1, true);
+  Type *elem_type = Type::MakeInt(1, true, VARIANT_NONE);
   TypeArray *type = Type::MakeArray(elem_type, len + 1);
 
   DataString *nstr = DataString::Make((const uint8_t*) data, len + 1);
@@ -1837,7 +1837,7 @@ Exp* Exp::MakeBound(BoundKind bound_kind, Exp *target, Type *stride_type)
       if (width != 1) {
         // punt and rewrite this expression as a byte bound:
         // bound(x, type) == bound(x, byte) / sizeof(type)
-        Type *new_stride_type = Type::MakeInt(1, true);
+        Type *new_stride_type = Type::MakeInt(1, true, VARIANT_NONE);
         Exp *outer_exp = MakeBound(bound_kind, target, new_stride_type);
         ExpInt *divide_exp = Exp::MakeInt(width);
         Exp *new_exp = Exp::MakeBinop(B_Div, outer_exp, divide_exp);
@@ -2429,7 +2429,7 @@ public:
       term_count++;
   }
 };
- 
+
 size_t Exp::TermCount()
 {
   ExpVisitor_TermCount visitor;

@@ -150,15 +150,18 @@ class Location : public HashObject
 // generic sign tag. empty, only specified if something is signed.
 #define TAG_Sign    112
 
+// only used for int types, provides a specialized subtype (eg bool)
+#define TAG_Variant 114
+
 // generic name tag, contains a TAG_String.
-#define TAG_Name    114
+#define TAG_Name    116
 
 // generic true/false tag, empty contents.
-#define TAG_True    116
-#define TAG_False   118
+#define TAG_True    118
+#define TAG_False   120
 
 // debugging tag containing a TAG_UInt32 hash code.
-#define TAG_Hash    120
+#define TAG_Hash    128
 
 // cached string tag. contains either a TAG_String followed by a TAG_UInt32,
 // in which case the int gives an ID for the string, or a TAG_UInt32,

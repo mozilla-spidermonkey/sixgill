@@ -412,7 +412,7 @@ void XIL_TranslateReference(struct XIL_TreeEnv *env, tree node)
     XIL_TranslateTree(&structure_env, structure);
 
     XIL_Exp xil_byte_offset = XIL_ExpInt(byte_offset);
-    XIL_Type byte_type = XIL_TypeInt(1, 0);
+    XIL_Type byte_type = XIL_TypeInt(1, 0, 0);
     XIL_Exp result = XIL_ExpIndex(xil_structure, byte_type, xil_byte_offset);
     XIL_ProcessResult(env, result);
     return;
@@ -945,7 +945,7 @@ void XIL_TranslateStatement(struct XIL_TreeEnv *env, tree node)
         // get the signature for an allocation function: void* func(size_t);
         XIL_Type void_type = XIL_TypeVoid();
         XIL_Type void_ptr = XIL_TypePointer(void_type, xil_pointer_width);
-        XIL_Type size_type = XIL_TypeInt(xil_pointer_width, 0);
+        XIL_Type size_type = XIL_TypeInt(xil_pointer_width, 0, 0);
         XIL_AnnotationList no_annotations = XIL_MakeAnnotationList();
         XIL_Type alloca_type =
           XIL_TypeFunction(void_ptr, NULL, 0, &size_type, NULL, 1, no_annotations);
