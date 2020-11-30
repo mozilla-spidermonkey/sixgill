@@ -47,10 +47,10 @@ bool XIL_IsDestructor(tree decl)
 }
 
 static struct XIL_CString
-ColonPrefix(const char* prefix, const char* suffix)
+JoinCStrings(const char* prefix, char sep, const char* suffix)
 {
     struct XIL_CString str = XIL_AllocCString(strlen(prefix) + 1 + strlen(suffix) + 1);
-    sprintf((char*) str.str, "%s:%s", prefix, suffix);
+    sprintf((char*) str.str, "%s%c%s", prefix, sep, suffix);
     return str;
 }
 
@@ -98,7 +98,7 @@ GlobalName(tree decl)
   tree context = DECL_CONTEXT(decl);
   if (context && TREE_CODE(context) == FUNCTION_DECL) {
     struct XIL_CString func_name = XIL_GlobalName(context);
-    full_name = ColonPrefix(func_name.str, name);
+    full_name = JoinCStrings(func_name.str, ':', name);
     XIL_ReleaseCString(&func_name);
     return full_name;
   }
@@ -111,7 +111,7 @@ GlobalName(tree decl)
   if (!TREE_PUBLIC(decl) || strcmp(name, "main") == 0) {
     // get the filename (excluding directories) of the source file.
     const char *file = DECL_SOURCE_FILE(decl);
-    return ColonPrefix(XIL_Basename(file), name);
+    return JoinCStrings(XIL_Basename(file), ':', name);
   }
 
   full_name.str = name;
@@ -371,7 +371,7 @@ XIL_Var generate_TranslateVar(tree decl)
       else {
         // use 'function:name' since the structure's name must be
         // globally unique.
-        anon_name = ColonPrefix(xil_active_env.decl_name, full_name.str);
+        anon_name = JoinCStrings(xil_active_env.decl_name, ':', full_name.str);
       }
 
       XIL_CSUName(type, anon_name.str);
