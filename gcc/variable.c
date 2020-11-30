@@ -49,9 +49,7 @@ bool XIL_IsDestructor(tree decl)
 static struct XIL_CString
 ColonPrefix(const char* prefix, const char* suffix)
 {
-    struct XIL_CString str = { NULL, false };
-    str.str = (char*) xmalloc(strlen(prefix) + 1 + strlen(suffix) + 1);
-    str.owned = true;
+    struct XIL_CString str = XIL_AllocCString(strlen(prefix) + 1 + strlen(suffix) + 1);
     sprintf((char*) str.str, "%s:%s", prefix, suffix);
     return str;
 }
@@ -59,7 +57,7 @@ ColonPrefix(const char* prefix, const char* suffix)
 static struct XIL_CString
 GlobalName(tree decl)
 {
-  struct XIL_CString full_name = { NULL, false };
+  struct XIL_CString full_name = { NULL, 0 };
 
   // if there is an annot_global then it has the global name.
   tree attr = DECL_ATTRIBUTES(decl);
@@ -129,10 +127,8 @@ struct XIL_CString XIL_GlobalName(tree decl)
     return name;
   if (strstr(name.str, "<lambda"))
     return name;
-  struct XIL_CString full_name = { NULL, false };
   const char *mangled = decl_as_string(DECL_ASSEMBLER_NAME(decl), TFF_DECL_SPECIFIERS);
-  full_name.str = (char*) xmalloc(strlen(mangled) + 1 + strlen(name.str) + 1);
-  full_name.owned = true;
+  struct XIL_CString full_name = XIL_AllocCString(strlen(mangled) + 1 + strlen(name.str) + 1);
   sprintf((char*) full_name.str, "%s$%s", mangled, name.str);
   XIL_ReleaseCString(&name);
   return full_name;
@@ -213,7 +209,7 @@ XIL_Var generate_TranslateVar(tree decl)
   static XIL_Var error_var = NULL;
   if (!error_var) error_var = XIL_VarGlob("error", "error");
 
-  struct XIL_CString name = { NULL, false };
+  struct XIL_CString name = { NULL, 0 };
   name.str = XIL_SourceName(decl);
   tree type = TREE_TYPE(decl);
 
@@ -247,18 +243,20 @@ XIL_Var generate_TranslateVar(tree decl)
       if (pos) base_name = pos + 1;
 
       char *new_name = xstrdup(base_name);
+      size_t capacity = strlen(base_name) + 1;
       char *cut_pos = strchr(new_name,'<');
       if (cut_pos) *cut_pos = 0;
 
-      XIL_SetCString(&name, new_name, 1);
+      XIL_SetCString(&name, new_name, capacity);
     }
 
     // the source name for destructors does not include the '~'. add it here.
     if (XIL_IsDestructor(decl)) {
-      char *new_name = (char*) xmalloc(strlen(name.str) + 2);
+      size_t capacity = strlen(name.str) + 2;
+      char *new_name = (char*) xmalloc(capacity);
       *new_name = '~';
       strcpy(new_name + 1, name.str);
-      XIL_SetCString(&name, new_name, 1);
+      XIL_SetCString(&name, new_name, capacity);
     }
 
     XIL_Var ret = XIL_VarFunc(full_name.str, name.str);
@@ -327,7 +325,7 @@ XIL_Var generate_TranslateVar(tree decl)
       attr = TREE_CHAIN(attr);
     }
 
-    struct XIL_CString full_name = { NULL, false };
+    struct XIL_CString full_name = { NULL, 0 };
 
     // figure out whether this is a local.
     bool is_global = false;
@@ -366,9 +364,9 @@ XIL_Var generate_TranslateVar(tree decl)
     // if the variable's type is an anonymous structure, give the structure
     // a name based on the variable.
     if (XIL_IsAnonymous(type)) {
-      struct XIL_CString anon_name = { NULL, false };
+      struct XIL_CString anon_name = { NULL, 0 };
       if (is_global) {
-        XIL_SetCString(&anon_name, full_name.str, false); // full_name will live longer
+        XIL_SetCString(&anon_name, full_name.str, 0); // full_name will live longer
       }
       else {
         // use 'function:name' since the structure's name must be

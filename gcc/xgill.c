@@ -58,23 +58,23 @@ struct XIL_ParamDecl *xil_pending_param_decls = NULL;
 
 void XIL_ReleaseCString(struct XIL_CString *xstr)
 {
-  if (xstr->owned)
+  if (xstr->capacity > 0)
     free((char*) xstr->str);
   xstr->str = NULL;
-  xstr->owned = false;
+  xstr->capacity = 0;
 }
 
 void XIL_AssignCString(struct XIL_CString *dst, struct XIL_CString *src)
 {
   if (dst->str == src->str) {
-    gcc_assert(!(dst->owned && src->owned));
+    gcc_assert(!(dst->capacity && src->capacity));
     return;
   }
 
   XIL_ReleaseCString(dst);
   dst->str = src->str;
-  dst->owned = src->owned;
-  src->owned = false;
+  dst->capacity = src->capacity;
+  src->capacity = 0;
 }
 
 XIL_CString XIL_ConcatCString(struct XIL_CString *a, struct XIL_CString *b) {
@@ -82,7 +82,7 @@ XIL_CString XIL_ConcatCString(struct XIL_CString *a, struct XIL_CString *b) {
     if (!a->str) {
         XIL_AssignCString(a, b);
         dst = *a;
-        a->owned = false;
+        a->capacity = 0;
         return dst;
     }
 
@@ -92,7 +92,7 @@ XIL_CString XIL_ConcatCString(struct XIL_CString *a, struct XIL_CString *b) {
     memcpy(str, a->str, alen);
     strcpy(str + alen, b->str);
     dst.str = str;
-    dst.owned = true;
+    dst.capacity = rlen;
     return dst;
 }
 
@@ -103,19 +103,19 @@ void XIL_AppendCString(struct XIL_CString *a, struct XIL_CString *b) {
 
     if (!a->str) {
         *a = *b;
-        b->owned = false;
+        b->capacity = 0;
         return;
     }
 
-    struct XIL_CString dst = { NULL, false };
+    struct XIL_CString dst = { NULL, 0 };
     size_t alen = strlen(a->str);
-    size_t rlen = alen + strlen(b->str) + 1;
-    if (a->owned) {
+    size_t rcap = alen + strlen(b->str) + 1;
+    if (a->capacity) {
         dst = *a;
-        char* str = (char*) xrealloc((void*) dst.str, rlen);
+        char* str = (char*) xrealloc((void*) dst.str, rcap);
         strcpy(str + alen, b->str);
         dst.str = str;
-        dst.owned = true;
+        dst.capacity = rcap;
     } else {
         dst = XIL_ConcatCString(a, b);
         XIL_ReleaseCString(a);
@@ -125,19 +125,26 @@ void XIL_AppendCString(struct XIL_CString *a, struct XIL_CString *b) {
 }
 
 void XIL_AppendString(struct XIL_CString *dst, const char *str) {
-    struct XIL_CString src = { str, false };
+    struct XIL_CString src = { str, 0 };
     XIL_AppendCString(dst, &src);
 }
 
-void XIL_SetCString(struct XIL_CString *xstr, const char *str, int owned)
+void XIL_SetCString(struct XIL_CString *xstr, const char *str, size_t capacity)
 {
   if (xstr->str == str) {
-    gcc_assert(!xstr->owned);
+    gcc_assert(!xstr->capacity);
     return;
   }
   XIL_ReleaseCString(xstr);
   xstr->str = str;
-  xstr->owned = owned;
+  xstr->capacity = capacity;
+}
+
+struct XIL_CString XIL_AllocCString(size_t capacity)
+{
+  struct XIL_CString src = { NULL, 0 };
+  XIL_SetCString(&src, (char*) xmalloc(capacity), capacity);
+  return src;
 }
 
 const char* XIL_Basename(const char* file)

@@ -430,13 +430,18 @@ extern struct XIL_ParamDecl *xil_pending_param_decls;
 struct XIL_CString
 {
     const char *str;
-    int owned;
+    size_t capacity;
 };
 
 const char* XIL_Basename(const char* path);
 
 // set a XIL_CString to a new value, releasing the old one if needed.
-void XIL_SetCString(struct XIL_CString *xstr, const char *str, int owned);
+// `capacity` is the number of bytes whose ownership is being transferred to
+// `xstr`, or 0 if ownership is not being granted.
+void XIL_SetCString(struct XIL_CString *xstr, const char *str, size_t capacity);
+
+// allocate a new string with the given capacity.
+struct XIL_CString XIL_AllocCString(size_t capacity);
 
 // assign one string to another, transferring ownership if needed.
 void XIL_AssignCString(struct XIL_CString *dst, struct XIL_CString *src);

@@ -203,27 +203,27 @@ static struct XIL_CString render_decl(tree decl);
 static struct XIL_CString
 render_template_argument(tree arg)
 {
-    struct XIL_CString dst = { NULL, false };
+    struct XIL_CString dst = { NULL, 0 };
     if (ARGUMENT_PACK_P(arg)) {
         // TODO: bug 1673114
-        XIL_SetCString(&dst, "...", false);
+        XIL_SetCString(&dst, "...", 0);
         return dst;
     }
 
     if (TYPE_P(arg) || TREE_CODE(arg) == TEMPLATE_DECL) {
         // *_as_string return strings owned by gcc tree nodes.
-        XIL_SetCString(&dst, type_as_string(arg, TFF_CHASE_TYPEDEF_IF_SAFE), false);
+        XIL_SetCString(&dst, type_as_string(arg, TFF_CHASE_TYPEDEF_IF_SAFE), 0);
         return dst;
     }
 
-    XIL_SetCString(&dst, expr_as_string(arg, TFF_CHASE_TYPEDEF), false);
+    XIL_SetCString(&dst, expr_as_string(arg, TFF_CHASE_TYPEDEF), 0);
     return dst;
 }
 
 static struct XIL_CString
 render_template_sequence(tree info, bool is_primary)
 {
-    struct XIL_CString dst = { NULL, false };
+    struct XIL_CString dst = { NULL, 0 };
     int ii;
 
     if (is_primary) {
@@ -272,12 +272,12 @@ render_template_sequence(tree info, bool is_primary)
 static struct XIL_CString
 render_decl(tree decl)
 {
-    struct XIL_CString str = { NULL, false };
+    struct XIL_CString str = { NULL, 0 };
 
     int stringify_flags = TFF_CHASE_TYPEDEF | TFF_UNQUALIFIED_NAME;
     if (TREE_CODE(decl) != TYPE_DECL) {
         // I have not (yet) observed crashes in decl_as_string for other decls.
-        XIL_SetCString(&str, decl_as_string(decl, stringify_flags), false);
+        XIL_SetCString(&str, decl_as_string(decl, stringify_flags), 0);
         return str;
     }
     tree type = TREE_TYPE(decl);
@@ -288,7 +288,7 @@ render_decl(tree decl)
         // Again, fall back to the "real" implementation where it has not been
         // observed to cause problems. An example of what would need to be
         // handled here for completeness is TEMPLATE_TYPE_PARM.
-        XIL_SetCString(&str, decl_as_string(decl, stringify_flags), false);
+        XIL_SetCString(&str, decl_as_string(decl, stringify_flags), 0);
     }
 
     bool is_template =
@@ -309,7 +309,7 @@ render_decl(tree decl)
 struct XIL_CString XIL_QualifiedName(tree decl)
 {
   gcc_assert(DECL_P(decl));
-  struct XIL_CString name = { NULL, false };
+  struct XIL_CString name = { NULL, 0 };
 
   if (TREE_CODE(decl) != TYPE_DECL && TREE_CODE(decl) != NAMESPACE_DECL) {
     TREE_UNEXPECTED(decl);
@@ -323,7 +323,7 @@ struct XIL_CString XIL_QualifiedName(tree decl)
   if (!context || TREE_CODE(context) == TRANSLATION_UNIT_DECL)
     return name;
 
-  struct XIL_CString context_name = { NULL, false };
+  struct XIL_CString context_name = { NULL, 0 };
   if (TREE_CODE(context) == RECORD_TYPE ||
       TREE_CODE(context) == UNION_TYPE) {
     // structure nested in another structure declaration. use the outer
@@ -333,9 +333,7 @@ struct XIL_CString XIL_QualifiedName(tree decl)
       const char* file = DECL_SOURCE_FILE(decl);
       while (strchr(file, '/') != NULL)
         file = strchr(file, '/') + 1;
-      struct XIL_CString full_name;
-      full_name.str = (char*) xmalloc(strlen(file) + strlen(name.str) + 2);
-      full_name.owned = true;
+      struct XIL_CString full_name = XIL_AllocCString(strlen(file) + strlen(name.str) + 2);
       sprintf((char*) full_name.str, "%s:%s", file, name.str);
       return full_name;
     }
@@ -361,9 +359,10 @@ struct XIL_CString XIL_QualifiedName(tree decl)
   }
 
   // append name to the qualified name of its context.
-  char *new_name = (char*) xmalloc(strlen(context_name.str) + strlen(name.str) + 3);
+  size_t cap = strlen(context_name.str) + strlen(name.str) + 3;
+  char *new_name = (char*) xmalloc(cap);
   sprintf(new_name, "%s::%s", context_name.str, name.str);
-  XIL_SetCString(&name, new_name, 1);
+  XIL_SetCString(&name, new_name, cap);
   XIL_ReleaseCString(&context_name);
   return name;
 }
@@ -1029,7 +1028,7 @@ XIL_Field generate_TranslateField(tree decl)
   // get the name of this field.
 
   tree idnode = DECL_NAME(decl);
-  struct XIL_CString name = { NULL, false };
+  struct XIL_CString name = { NULL, 0 };
 
   if (idnode) {
     name.str = IDENTIFIER_POINTER(idnode);
@@ -1037,8 +1036,7 @@ XIL_Field generate_TranslateField(tree decl)
   else {
     // anonymous field. use the name 'field:index'.
     gcc_assert(!is_func);
-    name.str = (char*) xmalloc(50);
-    name.owned = true;
+    name = XIL_AllocCString(50);
     sprintf((char*)name.str, "field:%d", index);
   }
 

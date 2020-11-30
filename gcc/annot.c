@@ -1404,7 +1404,7 @@ void XIL_PrintParameter(FILE *file, tree decl, int index)
 void XIL_PrintAnnotationHeader(FILE *file)
 {
   const char *name = NULL;
-  struct XIL_CString full_name = { NULL, false };
+  struct XIL_CString full_name = { NULL, 0 };
 
   if (state->decl) {
     name = XIL_SourceName(state->decl);
