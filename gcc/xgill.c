@@ -78,7 +78,7 @@ void XIL_AssignCString(struct XIL_CString *dst, struct XIL_CString *src)
 }
 
 XIL_CString XIL_ConcatCString(struct XIL_CString *a, struct XIL_CString *b) {
-    struct XIL_CString dst = { NULL, false };
+    struct XIL_CString dst = { NULL, 0 };
     if (!a->str) {
         XIL_AssignCString(a, b);
         dst = *a;
@@ -87,12 +87,12 @@ XIL_CString XIL_ConcatCString(struct XIL_CString *a, struct XIL_CString *b) {
     }
 
     size_t alen = strlen(a->str);
-    size_t rlen = alen + strlen(b->str) + 1;
-    char* str = (char*) xmalloc(rlen);
+    size_t rcap = alen + strlen(b->str) + 1;
+    char* str = (char*) xmalloc(rcap);
     memcpy(str, a->str, alen);
     strcpy(str + alen, b->str);
     dst.str = str;
-    dst.capacity = rlen;
+    dst.capacity = rcap;
     return dst;
 }
 
@@ -107,20 +107,19 @@ void XIL_AppendCString(struct XIL_CString *a, struct XIL_CString *b) {
         return;
     }
 
-    struct XIL_CString dst = { NULL, 0 };
     size_t alen = strlen(a->str);
     size_t rcap = alen + strlen(b->str) + 1;
     if (a->capacity) {
-        dst = *a;
-        char* str = (char*) xrealloc((void*) dst.str, rcap);
-        strcpy(str + alen, b->str);
-        dst.str = str;
-        dst.capacity = rcap;
+        if (a->capacity < rcap) {
+            a->str = (char*) xrealloc((void*) a->str, rcap);
+            a->capacity = rcap;
+        }
+        strcpy((char*) a->str + alen, b->str);
     } else {
-        dst = XIL_ConcatCString(a, b);
+        struct XIL_CString dst = XIL_ConcatCString(a, b);
         XIL_ReleaseCString(a);
+        *a = dst;
     }
-    *a = dst;
     XIL_ReleaseCString(b);
 }
 
@@ -145,6 +144,14 @@ struct XIL_CString XIL_AllocCString(size_t capacity)
   struct XIL_CString src = { NULL, 0 };
   XIL_SetCString(&src, (char*) xmalloc(capacity), capacity);
   return src;
+}
+
+void XIL_GrowCapacity(struct XIL_CString *xstr, size_t amount)
+{
+  if (xstr->capacity) {
+    xstr->capacity += amount;
+    xstr->str = (char*) xrealloc((void*) xstr->str, xstr->capacity);
+  }
 }
 
 const char* XIL_Basename(const char* file)

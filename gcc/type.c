@@ -298,6 +298,7 @@ render_decl(tree decl)
     }
 
     bool is_primary = !CLASSTYPE_USE_TEMPLATE(type);
+    XIL_GrowCapacity(&str, 50);
     XIL_AppendString(&str, "<");
     tree info = TYPE_TEMPLATE_INFO(type);
     struct XIL_CString list = render_template_sequence(info, is_primary);

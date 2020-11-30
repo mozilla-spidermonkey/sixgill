@@ -443,6 +443,8 @@ void XIL_SetCString(struct XIL_CString *xstr, const char *str, size_t capacity);
 // allocate a new string with the given capacity.
 struct XIL_CString XIL_AllocCString(size_t capacity);
 
+void XIL_GrowCapacity(struct XIL_CString *xstr, size_t amount);
+
 // assign one string to another, transferring ownership if needed.
 void XIL_AssignCString(struct XIL_CString *dst, struct XIL_CString *src);
 
