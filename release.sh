@@ -5,9 +5,6 @@
 
 set -e
 
-TT_UPLOAD_SERVER=tooltool-uploads.pub.build.mozilla.org
-TT_UPLOAD_PATH=/tooltool/uploads/"$USER"/pvt
-TOOLTOOL=~/src/build-tooltool/tooltool.py
 MESSAGE=
 
 DO_CLEAN=1
@@ -151,28 +148,6 @@ function need_srcdir() {
     echo "Invalid srcdir" >&2
     exit 1
   fi
-}
-
-function emplace() {
-  need_srcdir
-  (
-    cd $FOLDER
-    [ -f manifest.tt ] && rm manifest.tt
-    for f in *; do [[ $f = manifest.tt ]] || python $TOOLTOOL add "$f" --visibility public --unpack; done
-  )
-  local digest=$(json $FOLDER/manifest.tt -e 'cat --nokeys 0/digest')
-  local size=$(json $FOLDER/manifest.tt -e 'cat --nokeys 0/size')
-  for manifest in $SRCDIR/browser/config/tooltool-manifests/linux64/hazard.manifest $SRCDIR/b2g/dev/config/tooltool-manifests/linux64/hazard.manifest $SRCDIR/js/src/devtools/rootAnalysis/build/sixgill.manifest; do
-      json $manifest -e 'grep --cd sixgill.tar.xz */filename' -e "set digest=$digest" -e "set size=$size" -e "set hg_id \"$(hg id)\"" -e 'write --noindent'
-  done
-}
-
-function distribute() {
-  echo -n "Press enter to upload"
-  read
-  echo "Uploading to $TT_UPLOAD_PATH"
-  ( cd $FOLDER && python $TOOLTOOL upload --message "$MESSAGE" --authentication-file=~/.ssh/tooltool-upload.tok )
-  echo "Uploaded contents of $FOLDER"
 }
 
 if ! [[ -n "$DO_PACKAGE" ]]; then need_folder; fi
