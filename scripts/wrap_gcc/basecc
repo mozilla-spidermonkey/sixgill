@@ -57,9 +57,12 @@ if ($ccname !~ /(cc|\+\+)$/) {
 my ($gccpath) = glob("$gccdir/*gcc");
 die "Cannot find gcc binary" if ! $gccpath;
 
-my ($xsource) = grep { (-x "$_/xsource") } (split(/:/, $ENV{PATH}), "$FindBin::Bin/../../bin");
-die "Cannot find xsource binary" if ! $xsource;
-$xsource .= "/xsource";
+my $xsource;
+if (! $ENV{XGILL_NO_SOURCE}) {
+    ($xsource) = grep { (-x "$_/xsource") } (split(/:/, $ENV{PATH}), "$FindBin::Bin/../../bin");
+    die "Cannot find xsource binary" if ! $xsource;
+    $xsource .= "/xsource";
+}
 
 my ($plugindir) = grep { (-x "$_/xgill.so") } $FindBin::Bin, "$FindBin::Bin/../../gcc";
 die "Cannot find plugin xgill.so\n" if not $plugindir;
@@ -191,6 +194,8 @@ log_basecc("RUNNING $gccdir/$ccname $xgillargs $args");
 $code = system("$gccdir/$ccname $xgillargs $args") / 256;
 
 if ($code == 0) {
+    exit(0) if ! $xsource;
+
     # get the source and preprocessed code.
     log_basecc("GRABBING SOURCE: $gccdir/$ccname $ppargs | $xsource $sourceargs");
     $code = system("$gccdir/$ccname $ppargs | $xsource $sourceargs") / 256;
