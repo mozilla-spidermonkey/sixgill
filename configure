@@ -4117,18 +4117,22 @@ fi
 
 
 
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking target compiler" >&5
+$as_echo_n "checking target compiler... " >&6; }
 
 # Check whether --with-target-cc was given.
 if test "${with_target_cc+set}" = set; then :
   withval=$with_target_cc; TARGET_CC=$withval
 else
-  TARGET_CC=$CC
+  TARGET_CC=${TARGET_CC-$CC}
 fi
 
 
+TARGET_CC=${TARGET_CC-$CC}
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $TARGET_CC" >&5
+$as_echo "$TARGET_CC" >&6; }
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking symbol linkage in cc1" >&5
 $as_echo_n "checking symbol linkage in cc1... " >&6; }
-TARGET_CC=${TARGET_CC-$CC}
 CC1_BINARY=`$TARGET_CC --print-prog-name=cc1`
 CC1_LINKAGE=`nm -D $CC1_BINARY | egrep -q 'T print_node$' && echo C || echo mangled`
 { $as_echo "$as_me:${as_lineno-$LINENO}: result: $CC1_LINKAGE" >&5
@@ -5539,4 +5543,3 @@ sixgill configuration (Please review)
 ===============================================================
 
 " >&6; }
-

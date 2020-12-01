@@ -13,7 +13,7 @@ case "$host_os" in
     HOST_CFLAGS="-I/opt/local/include -DHOST_DARWIN";
     HOST_LDFLAGS="-L/opt/local/lib";
     ;;
-    
+
   cygwin*)
     HOST_CFLAGS="-DHOST_CYGWIN";
     ;;
@@ -72,7 +72,7 @@ AC_CHECK_HEADERS( cvc3/vc.h )
 LIBS_SAVED=$LIBS
 LIBS="$LIBS -lcvc3 -lgmp"
 AC_LINK_IFELSE(
-    [AC_LANG_PROGRAM([#include <cvc3/vc.h>], 
+    [AC_LANG_PROGRAM([#include <cvc3/vc.h>],
       [CVC3::Expr expr])],
     [AC_DEFINE(HAVE_CVC3, 1, [Define if you want to use CVC3])]
     [CVC3_LIBS="-lcvc3"]
@@ -93,7 +93,7 @@ AC_ARG_WITH([yices],
 if test "x$YICES_DIR" != "x" ; then
      AC_CHECK_FILE( ${YICES_DIR}/lib/libyices.a, [USE_YICES="yes"], [USE_YICES="no"] )
 else
-     [ USE_YICES="no" ] 
+     [ USE_YICES="no" ]
 fi
 AC_SUBST(USE_YICES)
 AC_SUBST(YICES_DIR)
@@ -102,14 +102,16 @@ dnl **********************
 dnl Sometimes symbols in cc1/cc1plus are extern "C", sometimes mangled C++
 dnl **********************
 
+AC_MSG_CHECKING([target compiler])
 AC_ARG_WITH([target-cc],
             [AS_HELP_STRING([--target-cc=PATH],
               [Compiler that will run with the plugin])],
             [TARGET_CC=$withval],
-            [TARGET_CC=$CC])
+            [TARGET_CC=${TARGET_CC-$CC}])
 
-AC_MSG_CHECKING([symbol linkage in cc1])
 TARGET_CC=${TARGET_CC-$CC}
+AC_MSG_RESULT($TARGET_CC)
+AC_MSG_CHECKING([symbol linkage in cc1])
 CC1_BINARY=`$TARGET_CC --print-prog-name=cc1`
 CC1_LINKAGE=`nm -D $CC1_BINARY | egrep -q 'T print_node$' && echo C || echo mangled`
 AC_MSG_RESULT($CC1_LINKAGE)
@@ -193,4 +195,3 @@ sixgill configuration (Please review)
 ===============================================================
 
 ])
-

@@ -1,7 +1,6 @@
 #!/bin/bash
 
-# SRCDIR=$HOME/src/MI-GC MESSAGE="Test for automated sixgill uploading, delete at will" ./release.sh --disable-cvc3
-# SRCDIR=$HOME/src/MI-GC/js/src MESSAGE="Test for b2g sixgill automation, delete at will" TARGET_CC=/builds/slave/testing/build/target_compiler/gcc/linux-x86/arm/arm-linux-androideabi-4.7/bin/arm-linux-androideabi-gcc ./release.sh
+# See `build` script in same directory for current sample usage.
 
 set -e
 
@@ -65,6 +64,21 @@ while [ "$#" -gt 0 ]; do
     shift
     MESSAGE="$1"
     shift
+  elif [ "$1" = "--target-cc" ]; then
+    shift
+    TARGET_CC="$1"
+    export TARGET_CC
+    if [ -d "$TARGET_CC/gcc" ]; then
+        TARGET_CC="$TARGET_CC/gcc"
+    fi
+    if [ -d "$TARGET_CC/bin" ]; then
+        TARGET_CC="$TARGET_CC/bin"
+    fi
+    if [ -f "$TARGET_CC/gcc" ]; then
+        TARGET_CC="$TARGET_CC/gcc"
+    fi
+    shift
+    echo "SET TARGET_CC TO $TARGET_CC"
   elif [ "$1" = "--" ]; then
     shift
     break

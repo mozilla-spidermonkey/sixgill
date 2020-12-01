@@ -23,7 +23,7 @@ XGILL_OBJS= xgill.o type.o variable.o tree.o annot.o missing.o
 all: xgill.so
 
 xgill.so: $(XGILL_OBJS) ../bin/libxgill.a
-	$(CXX) -shared -fPIC -o $@ $^ -lstdc++ ${HOST_LDFLAGS} -lz -lgmp
+	$(CXX) -shared -fPIC -o $@ $^ -lstdc++ ${HOST_LDFLAGS} -lz -Wl,-Bstatic -lgmp -Wl,-Bdynamic
 
 %.o: %.c xgill.h ../imlang/interface.h
 	$(PLUGIN_CC) $(HOST_CFLAGS) -I$(GCC_PLUGIN_HEADERS) -g3 -fPIC -Wall -Wno-unused-value -c -o $@ $<
