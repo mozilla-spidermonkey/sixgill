@@ -524,7 +524,11 @@ struct XIL_VirtualFunction* XIL_GetFunctionFields(tree type, bool fields_are_up_
   // will call XIL_GetFunctionFields to ensure that no unvisited types are
   // encountered.
   bool *pworking = (bool*) XIL_Associate(XIL_AscGlobal, "VTableWork", decl);
-  gcc_assert(!*pworking);
+  if (*pworking) {
+      fprintf(stderr, "ERROR: Re-entrancy detected in XIL_GetFunctionFields for type '%s'!\n",
+              XIL_CSUName(type, NULL));
+      gcc_assert(!*pworking);
+  }
 
   struct XIL_VirtualFunction *virt = NULL;
   struct XIL_VirtualFunction **pvirt = (struct XIL_VirtualFunction**)
