@@ -272,7 +272,13 @@ struct XIL_VirtualFunction
 };
 
 // get the list of function fields for the specified type, making it if needed.
-struct XIL_VirtualFunction* XIL_GetFunctionFields(tree type);
+// It is important that this function not be re-entered, as would happen if the
+// field definitions contained class types that need to be reprocessed (because
+// a lazy function definition was triggered), so the `fields_are_up_to_date`
+// flag must say whether the fields are definitely already up to date. If it is
+// false, then all types in all fields (including methods) will be processed
+// before doing anything that might re-enter.
+struct XIL_VirtualFunction* XIL_GetFunctionFields(tree type, bool fields_are_up_to_date);
 
 // information about a local variable within a function. we need to keep around
 // all the local variables in a function to watch for duplicate names.

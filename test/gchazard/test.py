@@ -45,3 +45,6 @@ bases = [ b['Base'] for b in JSObject['CSUBaseClass'] ]
 assert('js::gc::Cell' in bases)
 assert('Bogon' in bases)
 assert(len(bases) == 2)
+
+# Regression test for reentrant XIL_GetFunctionFields calls.
+compile("lazy.cpp");

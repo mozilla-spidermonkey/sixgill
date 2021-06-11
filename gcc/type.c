@@ -481,13 +481,48 @@ const char* XIL_CSUName(tree type, const char *name)
   return NULL;
 }
 
-struct XIL_VirtualFunction* XIL_GetFunctionFields(tree type)
+static void translate_all_virtual_methods(tree type)
+{
+  // translate all virtual methods defined directly in this type
+  for (method_iterator miter(type); miter; ++miter) {
+    for (ovl_iterator iter(*miter); iter; ++iter) {
+      // the node may or may not be an overload. these handle both cases.
+      tree method = *iter;
+      if (TREE_CODE(method) == FUNCTION_DECL && DECL_VIRTUAL_P(method))
+        XIL_TranslateType(TREE_TYPE(method));
+    }
+  }
+
+  // recurse through base classes
+  for (tree decl = TYPE_FIELDS(type); decl; decl = TREE_CHAIN(decl)) {
+    bool offset_zero;
+    if (TREE_CODE(decl) == FIELD_DECL && XIL_IsBaseField(decl, &offset_zero))
+      translate_all_virtual_methods(TREE_TYPE(decl));
+  }
+}
+
+struct XIL_VirtualFunction* XIL_GetFunctionFields(tree type, bool fields_are_up_to_date)
 {
   tree decl = TYPE_FIELDS(type);
   if (!decl) return NULL;
 
+  if (!fields_are_up_to_date && c_dialect_cxx() && CLASS_TYPE_P(type)) {
+    // First generate types for all virtual methods in this class and its base
+    // classes. The function fields need to be able to get types for these
+    // methods without triggering a generation for a record type, which could
+    // reenter this function.
+    translate_all_virtual_methods(type);
+  }
+
   // keep a flag of the types we are currently getting the function fields for.
-  // can't have reentrancy for this computation on the same type.
+  // We cannot have reentrancy for this computation on the same type. This is
+  // maintained by only calling this function in a context where it cannot
+  // recurse: either (1) it's a recursive call for a base type, and there can't
+  // be loops in the inheritance hierarchy; or (2) it's called from
+  // XIL_TranslateRecordType or XIL_GetVTableField, both of which set
+  // fields_are_up_to_date=false so that translate_all_virtual_methods, above,
+  // will call XIL_GetFunctionFields to ensure that no unvisited types are
+  // encountered.
   bool *pworking = (bool*) XIL_Associate(XIL_AscGlobal, "VTableWork", decl);
   gcc_assert(!*pworking);
 
@@ -513,7 +548,7 @@ struct XIL_VirtualFunction* XIL_GetFunctionFields(tree type)
 
       // get the function fields for this base class.
       struct XIL_VirtualFunction *bvirt =
-        XIL_GetFunctionFields(TREE_TYPE(decl));
+        XIL_GetFunctionFields(TREE_TYPE(decl), true);
 
       for (; bvirt; bvirt = bvirt->next) {
         virt = (struct XIL_VirtualFunction *) xcalloc(1, sizeof(struct XIL_VirtualFunction));
@@ -647,26 +682,6 @@ void XIL_AddDataFields(tree type)
   }
 }
 
-static void translate_all_virtual_methods(tree type)
-{
-  // translate all virtual methods defined directly in this type
-  for (method_iterator miter(type); miter; ++miter) {
-    for (ovl_iterator iter(*miter); iter; ++iter) {
-      // the node may or may not be an overload. these handle both cases.
-      tree method = *iter;
-      if (TREE_CODE(method) == FUNCTION_DECL && DECL_VIRTUAL_P(method))
-        XIL_TranslateType(TREE_TYPE(method));
-    }
-  }
-
-  // recurse through base classes
-  for (tree decl = TYPE_FIELDS(type); decl; decl = TREE_CHAIN(decl)) {
-    bool offset_zero;
-    if (TREE_CODE(decl) == FIELD_DECL && XIL_IsBaseField(decl, &offset_zero))
-      translate_all_virtual_methods(TREE_TYPE(decl));
-  }
-}
-
 int xil_generate_record_types = 1;
 
 XIL_Type XIL_TranslateRecordType(tree type)
@@ -767,13 +782,8 @@ XIL_Type XIL_TranslateRecordType(tree type)
 
   // add any virtual functions to the type.
   if (c_dialect_cxx() && CLASS_TYPE_P(type)) {
-    // First generate types for all virtual methods in this class and its base
-    // classes. The function fields need to be able to get types for these
-    // methods without triggering a reentrant generation for a record type.
-    translate_all_virtual_methods(type);
-
     // add function fields for each virtual method in the type.
-    struct XIL_VirtualFunction *virt = XIL_GetFunctionFields(type);
+    struct XIL_VirtualFunction *virt = XIL_GetFunctionFields(type, false);
 
     for (; virt; virt = virt->next) {
       XIL_Var var = NULL;

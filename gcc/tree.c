@@ -1561,8 +1561,10 @@ static XIL_Field XIL_GetVTableField(tree type, tree node)
     }
   }
 
-  // find the original function field this vtable index corresponds to.
-  struct XIL_VirtualFunction *virt = XIL_GetFunctionFields(type);
+  // Find the original function field this vtable index corresponds to. Pass in
+  // a flag saying that the fields may not be up to date with the current decl,
+  // to avoid reentering XIL_GetFunctionFields.
+  struct XIL_VirtualFunction *virt = XIL_GetFunctionFields(type, false);
 
   for (; virt; virt = virt->next) {
     if (virt->index == vtable_index)
