@@ -2529,7 +2529,15 @@ void generate_TranslateTree(struct XIL_TreeEnv *env, tree node)
           tree element_type = TREE_TYPE(type);
           XIL_Type xil_element_type = XIL_TranslateType(element_type);
 
-          int ind, first = TREE_UINT(min_value), last = TREE_UINT(max_value);
+          // The first/last (begin/end) of a RANGE_EXPR may be different signs.
+          // In particular, when using the zero-length array extension, the
+          // min_value will be unsigned 0 and the max value will be signed -1.
+          // Don't bother handling gigantic arrays whose max_value overflows
+          // ssize_t.
+          ssize_t ind;
+          ssize_t first = TREE_SMALL_CONSTANT(min_value);
+          ssize_t last = TREE_SMALL_CONSTANT(max_value);
+          gcc_assert(last >= 0 || last == -1);
           for (ind = first; ind < last; ind++) {
             XIL_Exp xil_index = XIL_ExpInt(ind);
             XIL_Exp xil_lval_index =
