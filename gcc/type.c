@@ -563,10 +563,16 @@ struct XIL_VirtualFunction* XIL_GetFunctionFields(tree type, bool fields_are_up_
         virt->field = bvirt->field;
         virt->decl = bvirt->decl;
 
-        // if the base is at offset zero, any entries in its vtable are at
-        // the same indexes in the vtable for this class. methods from other
-        // bases do not have entries in the vtable for this class unless
-        // this class overrides them.
+        // Entries in `type`'s vtable that are inherited from base classes
+        // are ordinarily at the same indexes as in those base classes,
+        // except in two cases: (1) the base is not at offset zero (i.e.,
+        // it is not the primary base class), or (2) the derived class's
+        // method has a covariant return type DRET and is overriding a
+        // method returning BRET, and BRET is not the primary base class
+        // of DRET.
+        //
+        // Methods from non-primary bases do not have entries in the vtable for
+        // this class unless this class overrides them.
         if (offset_zero)
           virt->index = bvirt->index;
         else
@@ -591,10 +597,21 @@ struct XIL_VirtualFunction* XIL_GetFunctionFields(tree type, bool fields_are_up_
     // a method from a base class not at offset zero.
     int index = TREE_UINT(DECL_VINDEX(decl));
 
-    if (virt->index == -1)
+    if (virt->index == -1) {
+      // Initialize the index within the vtable. which was previously unknown.
       virt->index = index;
-    else
-      gcc_assert(virt->index == index);
+    } else {
+      // In most cases, this will set the index to the same value. In rare
+      // instances, it will change the value to a different index for the
+      // subclass. This should only happen in a covariant return value
+      // situation, as described above. Unfortunately, I don't know of a good
+      // way to assert this. I could manually walk the chain of fields to find
+      // a DECL_THUNK_P decl with DECL_VINDEX == NULL_TREE, I guess, but I
+      // would need to somehow check that the field name (the virtual method
+      // name) matches. Which is messy. And anyway, we want the most-derived
+      // index anyway, so at least it's correct to overwrite this here.
+      virt->index = index;
+    }
   }
 
   // add entries for any virtual functions in this class that aren't inherited.
