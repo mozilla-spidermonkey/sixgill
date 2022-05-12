@@ -86,14 +86,20 @@ for name in tests:
         os.mkdir(outdir)
 
     def compile(source):
-        cmd = "{CXX} -c {source} -fplugin={sixgill}".format(source=os.path.join(indir, source),
-                                                            CXX=os.environ.get("CXX", os.environ.get("CC", "@TARGET_CC@")),
-                                                            sixgill=plugin)
-        if source.endswith(".cpp"):
-            cmd += " -std=c++17"
+        if source.endswith(".c"):
+            compile = os.environ.get("CC", "@TARGET_CC@ -x c")
+        else:
+            compile = os.environ.get("CXX", "@TARGET_CC@ -x c++")
+            compile += " -std=c++17"
+        cmd = "{compile} -c {source} -fplugin={sixgill}".format(
+            source=os.path.join(indir, source),
+            compile=compile,
+            sixgill=plugin
+        )
         print("Running %s" % cmd)
         os.environ['CCACHE_DISABLE'] = '1'
-        os.system(cmd)
+        rc = os.system(cmd)
+        assert(rc == 0)
 
     def load_db_entry(dbname, pattern, require=True):
         output = check_output([os.path.join(bindir, "xdbkeys"), dbname + ".xdb"], universal_newlines=True)
