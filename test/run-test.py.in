@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import sys
 import typing
 from subprocess import check_output
 
@@ -74,7 +75,10 @@ class Body(dict):
         return self['Points'][self.assignment_point(varname)]
 
 
-tests = ['gchazard', 'gccbugs']
+_, *tests = sys.argv
+if not tests:
+    tests = ['gchazard', 'gccbugs']
+
 for name in tests:
     indir = os.path.join(topdir, "test", name)
     outdir = os.path.join(topdir, "test", "test-output", name)
