@@ -85,7 +85,7 @@ for name in tests:
     if not os.path.exists(outdir):
         os.mkdir(outdir)
 
-    def compile(source):
+    def compile(source, env_mods={}):
         if source.endswith(".c"):
             compile = os.environ.get("CC", "@TARGET_CC@ -x c")
         else:
@@ -98,8 +98,8 @@ for name in tests:
         )
         print("Running %s" % cmd)
         os.environ['CCACHE_DISABLE'] = '1'
-        rc = os.system(cmd)
-        assert(rc == 0)
+        os.environ.update(env_mods)
+        return check_output(["/bin/sh", "-c", cmd], text=True)
 
     def load_db_entry(dbname, pattern, require=True):
         output = check_output([os.path.join(bindir, "xdbkeys"), dbname + ".xdb"], universal_newlines=True)

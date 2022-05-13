@@ -1,3 +1,5 @@
+import re
+
 compile("autoptr.cc")
 compile("blowup.c")
 compile("callgraph.c")
@@ -83,5 +85,14 @@ assert(len(main["LoopIsomorphic"]) == 2)
 f = load_db_entry("src_body", "more_irreducible")
 assert(len(f) == 4)  # It's complicated.
 
-# Honestly, the main test for all the ones here and later is that the plugin's
-# asserts did not fire while disentangling the mess.
+# Rely on the plugin's assertions for testing all remaining functions in loop.c.
+
+# Timing test: without the optimization of discarding loop heads without back
+# edges to them, this will take 10s of seconds. With it, this should take well
+# under a second.
+from datetime import datetime
+t0 = datetime.now()
+output = compile("bigloop.cpp", env_mods={'SIXGILL_LOG_LOOPHEAD_OPT': '1'})
+t1 = datetime.now()
+elapsed = (t1 - t0).total_seconds()
+print(f"Elapsed: {elapsed} sec")
