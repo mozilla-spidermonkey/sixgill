@@ -77,7 +77,7 @@ class Body(dict):
 
 _, *tests = sys.argv
 if not tests:
-    tests = ['gchazard', 'gccbugs']
+    tests = ['gchazard', 'gccbugs', 'memory']
 
 for name in tests:
     indir = os.path.join(topdir, "test", name)
