@@ -93,6 +93,7 @@ assert(len(f) == 4)  # It's complicated.
 from datetime import datetime
 t0 = datetime.now()
 output = compile("bigloop.cpp", env_mods={'SIXGILL_LOG_LOOPHEAD_OPT': '1'})
+assert(re.search(r'Reduced loopheads \d+ -> 0 for CFG .*pref_test', output))
 t1 = datetime.now()
 elapsed = (t1 - t0).total_seconds()
 print(f"Elapsed: {elapsed} sec")

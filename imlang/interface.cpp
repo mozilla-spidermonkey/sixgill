@@ -1544,6 +1544,32 @@ extern "C" void XIL_WriteGenerated()
 
     // do loop splitting, and add any point annotations.
     Vector<BlockCFG*> split_cfgs;
+
+    // Discard loop heads that have a single incoming edge. This can
+    // dramatically speed up cases where you have a large number of trivial `do
+    // { ... } while(0)` loops that aren't actually loops. (They will be marked
+    // as loop heads, but no back edges point to them.)
+    size_t r, w = 0;
+    PPoint entry = cfg->GetEntryPoint();
+    for (r = 0; r < cfg->GetLoopHeadCount(); r++) {
+      PPoint head = cfg->GetLoopHead(r).point;
+      if (cfg->GetIncomingEdges(head).Size() >= 2 || head == entry) {
+        if (r != w) {
+          cfg->SetLoopHead(w, cfg->GetLoopHead(r));
+        }
+        w++;
+      }
+    }
+    cfg->SetLoopHeadCount(w);
+
+    static bool logOpt = ({
+      const char* v = getenv("SIXGILL_LOG_LOOPHEAD_OPT");
+      v && *v && *v != '0';
+    });
+    if (logOpt) {
+      logout << "Reduced loopheads " << r << " -> " << w << " for CFG " << cfg->GetId() << endl;
+    }
+
     SplitLoops(cfg, &split_cfgs);
     AddPointAnnotations(split_cfgs);
 

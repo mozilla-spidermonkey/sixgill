@@ -340,9 +340,22 @@ class BlockCFG : public HashObject
   size_t GetLoopHeadCount() const {
     return m_loop_heads ? m_loop_heads->Size() : 0;
   }
+  // Truncate list to the given size.
+  void SetLoopHeadCount(size_t size) const {
+    if (m_loop_heads) {
+      m_loop_heads->Resize(size);
+    } else {
+      Assert(size == 0);
+    }
+  }
   const LoopHead& GetLoopHead(size_t ind) const {
     Assert(m_loop_heads);
     return m_loop_heads->At(ind);
+  }
+  void SetLoopHead(size_t ind, const LoopHead& head) {
+    Assert(m_loop_heads);
+    ClearEdgeInfo();
+    m_loop_heads->At(ind) = head;
   }
 
   // returns whether point is isomorphic to a point in the CFG for an

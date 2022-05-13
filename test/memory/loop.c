@@ -1,5 +1,9 @@
 // test loop identification, back edge breaking
 
+#include <string.h>
+extern int fatal(const char* format, ...);
+extern void* xrealloc(const void* ptr, size_t size);
+
 # 1 "nested.c"
 void nested(char *a)
 {
@@ -208,7 +212,7 @@ restart:
 	if (newlen > 0xa00000)
 		fatal("buffer_append_space: alloc %u not supported",
 		    newlen);
-	buffer->buf = xrealloc(buffer->buf, newlen);
+        buffer->buf = (char*) xrealloc(buffer->buf, newlen);
 	buffer->alloc = newlen;
 	goto restart;
 }

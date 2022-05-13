@@ -12,14 +12,14 @@ class B : public A
 {
 public:
   int b;
-  int Set(int x) { a = x; b = x; }
+  int Set(int x) { a = x; b = x; return 0; }
 };
 
 class C : public A
 {
 public:
   int c;
-  int Set(int x) { c = x; }
+  int Set(int x) { c = x; return 0; }
 };
 
 void setter(A *a)
