@@ -97,7 +97,7 @@ GlobalName(tree decl)
   // of the function variable. (static local variables).
   tree context = DECL_CONTEXT(decl);
   if (context && TREE_CODE(context) == FUNCTION_DECL) {
-    struct XIL_CString func_name = XIL_GlobalName(context);
+    struct XIL_CString func_name = XIL_GlobalName(context, true);
     full_name = JoinCStrings(func_name.str, ':', name);
     XIL_ReleaseCString(&func_name);
     return full_name;
@@ -118,7 +118,7 @@ GlobalName(tree decl)
   return full_name;
 }
 
-struct XIL_CString XIL_GlobalName(tree decl)
+struct XIL_CString XIL_GlobalName(tree decl, bool for_context)
 {
   struct XIL_CString name = GlobalName(decl);
   if (!xil_prefix_with_mangled || !c_dialect_cxx() || DECL_EXTERN_C_P(decl))
@@ -128,6 +128,29 @@ struct XIL_CString XIL_GlobalName(tree decl)
   if (strstr(name.str, "<lambda"))
     return name;
   const char *mangled = decl_as_string(DECL_ASSEMBLER_NAME(decl), TFF_DECL_SPECIFIERS);
+  if (for_context) {
+    // If this name is being used to scope another name, then only return the
+    // mangled form. This is to prevent unmangled names from containing a '$'
+    // from a function scope:
+    //
+    //   static void foo(int* list) {
+    //     auto operate = []() { return something; };
+    //     forEachUsingLambda(list, operate);
+    //   }
+    //
+    // forEachUsingLambda will be instantiated with the local lambda, and we
+    // don't want it to be named
+    //
+    //   void forEachUsingLambda(int*, _ZL3fooPi$foo(int*)::__lambda78*)
+    //
+    // due to foo's name having a $ in it ('_ZL3fooPi$foo(int*)') since then
+    // consumers will think it is already in the format mangled$readable and
+    // will interpret "void forEachUsingLambda(int*, _ZL3fooPi" as the mangled
+    // name.
+    name = XIL_AllocCString(strlen(mangled) + 1);
+    strcpy((char*) name.str, mangled);
+    return name;
+  }
   struct XIL_CString full_name = XIL_AllocCString(strlen(mangled) + 1 + strlen(name.str) + 1);
   sprintf((char*) full_name.str, "%s$%s", mangled, name.str);
   XIL_ReleaseCString(&name);

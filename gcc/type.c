@@ -352,7 +352,7 @@ struct XIL_CString XIL_QualifiedName(tree decl)
     context_name = XIL_QualifiedName(context);
   }
   else if (TREE_CODE(context) == FUNCTION_DECL) {
-    context_name = XIL_GlobalName(context);
+    context_name = XIL_GlobalName(context, true);
   }
   else {
     TREE_UNEXPECTED(context);

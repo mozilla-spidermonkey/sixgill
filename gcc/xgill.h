@@ -471,7 +471,7 @@ void XIL_ReleaseCString(struct XIL_CString *xstr);
 // get the unique name to use for a global symbol. this may be a global
 // variable/function, static unit scope variable, or static function
 // scope variable.
-struct XIL_CString XIL_GlobalName(tree decl);
+struct XIL_CString XIL_GlobalName(tree decl, bool for_context = false);
 
 // get the non-unique name from the source to use for a global/local symbol.
 const char* XIL_SourceName(tree decl);
