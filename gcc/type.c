@@ -70,7 +70,15 @@ XIL_Type XIL_TranslatePointerType(tree type)
   tree target_type = TREE_TYPE(type);
   XIL_Type xil_target_type = XIL_TranslateType(target_type);
 
-  return XIL_TypePointer(xil_target_type, bytes);
+  enum PointerType reference;
+  if (TREE_CODE(type) == POINTER_TYPE) {
+    reference = PTR_POINTER;
+  } else if (TYPE_REF_IS_RVALUE(type)) {
+    reference = PTR_RVALUE_REF;
+  } else {
+    reference = PTR_REFERENCE;
+  }
+  return XIL_TypePointer(xil_target_type, bytes, reference);
 }
 
 XIL_Type XIL_TranslateNullptrType(tree type)
@@ -83,7 +91,7 @@ XIL_Type XIL_TranslateNullptrType(tree type)
     return XIL_TypeError();
   }
 
-  return XIL_TypePointer(XIL_TypeVoid(), bytes);
+  return XIL_TypePointer(XIL_TypeVoid(), bytes, PTR_POINTER);
 }
 
 XIL_Type XIL_TranslateArrayType(tree type)
@@ -101,7 +109,7 @@ XIL_Type XIL_TranslateArrayType(tree type)
     if (maxval) {
       if (TREE_CODE(maxval) != INTEGER_CST) {
         // variable sized array. treat this as a pointer type.
-        return XIL_TypePointer(xil_element_type, xil_pointer_width);
+        return XIL_TypePointer(xil_element_type, xil_pointer_width, PTR_POINTER);
       }
 
       if (!TYPE_UNSIGNED(maxval) && (int) TREE_INT(maxval) == -1) {

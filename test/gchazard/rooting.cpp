@@ -32,3 +32,18 @@ void root_arg(JSObject *obj, JSObject *random)
   unsigned int u1 = 1;
   unsigned int u2 = -1;
 }
+
+template <typename T, typename Process>
+void dostuff(T t, Process&& process) {
+    process(t);
+}
+
+void lambda_stuff(int* ptr, int& ref, int&& rref) {
+    dostuff(1, [](auto x) {
+        return lambda_stuff;
+    });
+    int local;
+    dostuff(1.0, [&](auto x) {
+        return x + local;
+    });
+}

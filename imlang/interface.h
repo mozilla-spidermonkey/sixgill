@@ -139,11 +139,17 @@ void XIL_ClearActiveBlock(int drop);
 // Types
 /////////////////////////////////////////////////////////////////////
 
+enum PointerType {
+  PTR_POINTER = 0,
+  PTR_REFERENCE = 1,
+  PTR_RVALUE_REF = 2
+};
+
 XIL_Type XIL_TypeError();
 XIL_Type XIL_TypeVoid();
 XIL_Type XIL_TypeInt(int width, int sign, int variant);
 XIL_Type XIL_TypeFloat(int width);
-XIL_Type XIL_TypePointer(XIL_Type target_type, int width);
+XIL_Type XIL_TypePointer(XIL_Type target_type, int width, enum PointerType reference);
 XIL_Type XIL_TypeArray(XIL_Type element_type, int count);
 XIL_Type XIL_TypeCSU(const char *csu_name, int *generate);
 XIL_Type XIL_TypeFunction(XIL_Type return_type, const char *this_csu,

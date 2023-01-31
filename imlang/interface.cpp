@@ -428,10 +428,10 @@ extern "C" XIL_Type XIL_TypeFloat(int width)
   return (XIL_Type) Type::MakeFloat((size_t) width);
 }
 
-extern "C" XIL_Type XIL_TypePointer(XIL_Type target_type, int width)
+extern "C" XIL_Type XIL_TypePointer(XIL_Type target_type, int width, enum PointerType reference)
 {
   GET_OBJECT(Type, target_type);
-  return (XIL_Type) Type::MakePointer(new_target_type, (size_t) width);
+  return (XIL_Type) Type::MakePointer(new_target_type, (size_t) width, (size_t) reference);
 }
 
 extern "C" XIL_Type XIL_TypeArray(XIL_Type element_type, int count)

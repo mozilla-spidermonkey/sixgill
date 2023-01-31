@@ -84,7 +84,7 @@ class Type : public HashObject
   static TypeVoid*     MakeVoid();
   static TypeInt*      MakeInt(size_t width, bool sign, size_t variant);
   static TypeFloat*    MakeFloat(size_t width);
-  static TypePointer*  MakePointer(Type *target_type, size_t width);
+  static TypePointer*  MakePointer(Type *target_type, size_t width, size_t reference);
   static TypeArray*    MakeArray(Type *element_type, size_t element_count);
   static TypeCSU*      MakeCSU(String *csu_name);
   static TypeFunction* MakeFunction(Type *return_type, TypeCSU *csu_type,
@@ -200,14 +200,16 @@ class TypePointer : public Type
 
   // inherited methods
   size_t Width() const;
+  size_t Reference() const;
   void Print(OutStream &out) const;
   void MarkChildren() const;
 
  private:
   Type *m_target_type;
   size_t m_width;
+  size_t m_reference; // 0=T*, 1=T&, 2=T&&
 
-  TypePointer(Type *target_type, size_t width);
+  TypePointer(Type *target_type, size_t width, size_t reference);
   friend class Type;
 };
 

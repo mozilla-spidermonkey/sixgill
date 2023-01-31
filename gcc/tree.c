@@ -944,7 +944,7 @@ void XIL_TranslateStatement(struct XIL_TreeEnv *env, tree node)
 
         // get the signature for an allocation function: void* func(size_t);
         XIL_Type void_type = XIL_TypeVoid();
-        XIL_Type void_ptr = XIL_TypePointer(void_type, xil_pointer_width);
+        XIL_Type void_ptr = XIL_TypePointer(void_type, xil_pointer_width, PTR_POINTER);
         XIL_Type size_type = XIL_TypeInt(xil_pointer_width, 0, 0);
         XIL_AnnotationList no_annotations = XIL_MakeAnnotationList();
         XIL_Type alloca_type =
@@ -2295,7 +2295,7 @@ void XIL_TranslateExpression(struct XIL_TreeEnv *env, tree node)
 
     tree type = TREE_TYPE(node);
     XIL_Type xil_type = XIL_TranslateType(type);
-    XIL_Type arg_type = XIL_TypePointer(XIL_TypeVoid(), xil_pointer_width);
+    XIL_Type arg_type = XIL_TypePointer(XIL_TypeVoid(), xil_pointer_width, PTR_POINTER);
     XIL_AnnotationList no_annotations = XIL_MakeAnnotationList();
     XIL_Type func_type = XIL_TypeFunction(xil_type, NULL, false, &arg_type, NULL, 1, no_annotations);
 

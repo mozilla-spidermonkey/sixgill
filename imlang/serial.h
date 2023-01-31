@@ -34,6 +34,7 @@
 //   TAG_Kind (all)
 //   TAG_Width (all)
 //   TAG_Sign (all)
+//   TAG_Reference (pointer)
 //   TAG_Variant (int)
 //   TAG_Name (csu)
 //   TAG_Type (pointer, array, function)
@@ -52,6 +53,8 @@
 
 // children: TAG_Type
 #define   TAG_TypeFunctionCSU  1106
+
+#define   TAG_Reference 1108
 
 ///////////////////////////////
 // CompositeCSU and Field

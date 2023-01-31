@@ -126,6 +126,7 @@ int Type::Compare(const Type *y0, const Type *y1)
     const TypePointer *ny0 = (const TypePointer*)y0;
     const TypePointer *ny1 = (const TypePointer*)y1;
     TryCompareObjects(ny0->GetTargetType(), ny1->GetTargetType(), Type);
+    TryCompareValues(ny0->Reference(), ny1->Reference());
     break;
   }
   case YK_Array: {
@@ -210,6 +211,7 @@ void Type::Write(Buffer *buf, const Type *y)
   case YK_Pointer: {
     const TypePointer *ny = (const TypePointer*)y;
     WriteTagUInt32(buf, TAG_Width, y->Width());
+    WriteTagUInt32(buf, TAG_Reference, ny->Reference());
     Type::Write(buf, ny->GetTargetType());
     break;
   }
@@ -272,6 +274,7 @@ Type* Type::Read(Buffer *buf)
   uint32_t kind = 0;
   uint32_t width = 0;
   uint32_t count = 0;
+  uint32_t reference = 0;
   uint32_t variant = 0;
   bool sign = false;
   bool varargs = false;
@@ -298,6 +301,11 @@ Type* Type::Read(Buffer *buf)
     case TAG_Sign: {
       Try(ReadTagEmpty(buf, TAG_Sign));
       sign = true;
+      break;
+    }
+    case TAG_Reference: {
+      Try(kind == YK_Pointer);
+      Try(ReadTagUInt32(buf, TAG_Reference, &reference));
       break;
     }
     case TAG_Variant: {
@@ -378,7 +386,7 @@ Type* Type::Read(Buffer *buf)
     return MakeFloat(width);
   case YK_Pointer:
     Try(target_type);
-    return MakePointer(target_type, width);
+    return MakePointer(target_type, width, reference);
   case YK_Array:
     Try(target_type);
     return MakeArray(target_type, count);
@@ -415,8 +423,8 @@ TypeFloat* Type::MakeFloat(size_t width) {
   return (TypeFloat*) g_table.Lookup(xy);
 }
 
-TypePointer* Type::MakePointer(Type *target_type, size_t width) {
-  TypePointer xy(target_type, width);
+TypePointer* Type::MakePointer(Type *target_type, size_t width, size_t reference) {
+  TypePointer xy(target_type, width, reference);
   return (TypePointer*) g_table.Lookup(xy);
 }
 
@@ -522,12 +530,13 @@ void TypeFloat::Print(OutStream &out) const
 // TypePointer
 /////////////////////////////////////////////////////////////////////
 
-TypePointer::TypePointer(Type *target_type, size_t width)
-  : Type(YK_Pointer), m_target_type(target_type), m_width(width)
+TypePointer::TypePointer(Type *target_type, size_t width, size_t reference)
+  : Type(YK_Pointer), m_target_type(target_type), m_width(width), m_reference(reference)
 {
   Assert(m_target_type);
   m_hash = Hash32(m_hash, m_target_type->Hash());
   m_hash = Hash32(m_hash, m_width);
+  m_hash = Hash32(m_hash, m_reference);
 }
 
 size_t TypePointer::Width() const
@@ -535,10 +544,19 @@ size_t TypePointer::Width() const
   return m_width;
 }
 
+size_t TypePointer::Reference() const
+{
+  return m_reference;
+}
+
 void TypePointer::Print(OutStream &out) const
 {
   m_target_type->Print(out);
-  out << "*";
+  switch (m_reference) {
+    case 0: out << "*"; break;
+    case 1: out << "&"; break;
+    case 2: out << "&&"; break;
+  }
 }
 
 void TypePointer::MarkChildren() const

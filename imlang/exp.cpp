@@ -684,7 +684,7 @@ static inline Type* NormalizeType(Type *type)
   if (TypePointer *ntype = type->IfPointer()) {
     if (!ntype->GetTargetType()->IsVoid()) {
       Type *void_type = Type::MakeVoid();
-      return Type::MakePointer(void_type, type->Width());
+      return Type::MakePointer(void_type, type->Width(), 0);
     }
   }
 

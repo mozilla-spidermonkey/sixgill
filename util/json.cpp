@@ -133,6 +133,7 @@ static void FillTagNames()
   ADD_TAG(Kind);
   ADD_TAG(OpCode);
   ADD_TAG(Width);
+  ADD_TAG(Reference);
   ADD_TAG(Variant);
   ADD_TAG(Offset);
   ADD_TAG(Count);
@@ -163,6 +164,7 @@ static inline bool IsPrimitiveTag(tag_t tag)
   case TAG_PEdgeAssumeNonZero:
   case TAG_Count:
   case TAG_Offset:
+  case TAG_Reference:
   case TAG_True:
   case TAG_False:
     return true;
