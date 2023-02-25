@@ -2135,18 +2135,24 @@ void XIL_TranslateExpression(struct XIL_TreeEnv *env, tree node)
 
     if (XIL_TreeResultUsed(env)) {
       if (env->result_assign) {
-        if(TREE_CODE(node) == AGGR_INIT_EXPR &&
-           AGGR_INIT_VIA_CTOR_P(node)) {
-          // this case shows up with operator new; the result of the ctor
-          // is supposed to get assigned somewhere. instead, invoke the ctor
-          // on the target of the assign (the result of the memory allocation).
-          instance_object = env->result_assign;
+        if (TREE_CODE(node) == AGGR_INIT_EXPR) {
+          if (AGGR_INIT_VIA_CTOR_P(node)) {
+            // this case shows up with operator new; the result of the ctor
+            // is supposed to get assigned somewhere. instead, invoke the ctor
+            // on the target of the assign (the result of the memory allocation).
+            instance_object = env->result_assign;
+            result_done = true;
+          } else {
+            // the call here will produce results into a temporary var_decl
+            // that we still need to assign into env->result_assign, so do not
+            // set result_done.
+          }
         }
         else {
           // store the call result directly into the lvalue our env needs.
           result_lval = env->result_assign;
+          result_done = true;
         }
-        result_done = true;
       }
       else {
         tree type = TREE_TYPE(node);
@@ -2172,6 +2178,9 @@ void XIL_TranslateExpression(struct XIL_TreeEnv *env, tree node)
         arg_start = 2;
       }
       else {
+        if (result_lval)
+          TREE_BOGUS_RESULT(env);
+
         // operand 2 is the return value.
         tree result = TREE_OPERAND(node, 2);
 
@@ -2184,8 +2193,6 @@ void XIL_TranslateExpression(struct XIL_TreeEnv *env, tree node)
             (bool*) XIL_Associate(XIL_AscBlock, "TargetResult", result);
           if (*temp_result) TREE_UNEXPECTED_RESULT(env, node);
           *temp_result = true;
-          if (result_lval)
-            TREE_BOGUS_RESULT(env);
           result_lval = (*temp_env)->result_assign;
         }
         else {
