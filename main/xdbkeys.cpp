@@ -22,7 +22,7 @@
 
 NAMESPACE_XGILL_USING
 
-const char *USAGE = "xdbkeys [options] dbname.db";
+const char *USAGE = "xdbkeys [options] dbname.db [substring]";
 
 ConfigOption print_stats(CK_Flag, "print-stats", NULL,
                          "just print key statistics");
@@ -33,12 +33,13 @@ int main(int argc, const char **argv)
 
   Vector<const char*> unspecified;
   bool parsed = Config::Parse(argc, argv, &unspecified);
-  if (!parsed || unspecified.Size() != 1) {
+  if (!parsed || unspecified.Size() < 1 || unspecified.Size() > 2) {
     Config::PrintUsage(USAGE);
     return 1;
   }
 
   const char *file = unspecified[0];
+  const char *substring = unspecified.Size() > 1 ? unspecified[1] : "";
 
   Xdb *xdb = new Xdb(file, false, false, true);
 
@@ -62,7 +63,9 @@ int main(int argc, const char **argv)
     xdb->LookupKey(stream, &key);
 
     Assert(ValidString(key.base, key.pos - key.base));
-    logout << (const char*) key.base << endl;
+    if (!substring || strstr((const char*)key.base, substring)) {
+      logout << (const char *)key.base << endl;
+    }
   }
 
   delete xdb;
