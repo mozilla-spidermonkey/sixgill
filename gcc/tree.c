@@ -22,6 +22,16 @@
 // behavior, but not handling the construct will reject too much code.
 #define MAXIMIZE_COVERAGE 1
 
+// auto buffer = std::make_unique<std::array<uint8_t, 1024 * 1024>>(); would
+// normally generate 1M assignments, which slows everything down and produces
+// enormous outputs (1.9GB in the original example), which causes timeouts
+// when the output is analyzed.
+//
+// Limit to a much smaller value and ignore the rest, as the truncation is
+// unlikely to affect the analysis results. (Initializing array elements isn't
+// very interesting.)
+#define MAX_STATIC_ARRAY_CONSTRUCTION_LIMIT 100
+
 EXTERN_BEGIN
 #include <tree-iterator.h>
 #include <cp/cp-tree.h>
@@ -2545,6 +2555,9 @@ void generate_TranslateTree(struct XIL_TreeEnv *env, tree node)
           ssize_t first = TREE_SMALL_CONSTANT(min_value);
           ssize_t last = TREE_SMALL_CONSTANT(max_value);
           gcc_assert(last >= 0 || last == -1);
+          if (last > 0 && last - first > MAX_STATIC_ARRAY_CONSTRUCTION_LIMIT) {
+              last = first + MAX_STATIC_ARRAY_CONSTRUCTION_LIMIT;
+          }
           for (ind = first; ind < last; ind++) {
             XIL_Exp xil_index = XIL_ExpInt(ind);
             XIL_Exp xil_lval_index =

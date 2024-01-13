@@ -73,3 +73,9 @@ assert(param_type('rref')['Reference'] == 2)
 
 # Regression test for reentrant XIL_GetFunctionFields calls.
 compile("lazy.cpp")
+
+# Prevent blowup from array initializers. This should clamp to 100 Assign expressions.
+compile("array.cpp")
+f = load_db_entry("src_body", re.compile(r'^void array_test'))
+assigns = [e for e in f[0]['PEdge'] if e['Kind'] == 'Assign']
+assert(len(assigns) == 100)
