@@ -1,4 +1,5 @@
 #include <utility>
+#include <type_traits>
 
 #include <new>  // for placement new
 #include <type_traits>
@@ -6,7 +7,7 @@
 
 #define ANNOTATE(tagname) __attribute__((annotate(tagname)))
 
-struct Cell { size_t f; } ANNOTATE("GC Thing");
+struct Cell { std::size_t f; } ANNOTATE("GC Thing");
 
 struct Nothing {};
 
@@ -23,7 +24,7 @@ struct MaybeStorage {
     Union() {}
     constexpr explicit Union(const T& aVal) : val{aVal} {}
     template <typename U,
-              typename = std::enable_if_t<std::is_move_constructible_v<U>>>
+              typename = std::enable_if_t<std::is_move_constructible<U>::value>>
     constexpr explicit Union(U&& aVal) : val{std::forward<U>(aVal)} {}
 
     ~Union() {}
@@ -221,6 +222,6 @@ static Maybe<CellStruct> cellStructTest;
 struct NonCellStruct { void* pointer; bool dummy; };
 static Maybe<NonCellStruct> nonCellStructTest;
 
-int checksize(size_t sss) {
+int checksize(std::size_t sss) {
   return sss;
 }
