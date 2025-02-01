@@ -66,7 +66,7 @@ void irreducible(char *a, int b)
   while (*a) {
     a++;
     L:
-    a++;
+    a--;
   }
 }
 
