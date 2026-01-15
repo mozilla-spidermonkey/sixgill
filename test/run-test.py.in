@@ -104,7 +104,7 @@ for name in tests:
     def load_db_entry(dbname, pattern, require=True):
         output = check_output([os.path.join(bindir, "xdbkeys"), dbname + ".xdb"], universal_newlines=True)
         entries = output.splitlines()
-        if not isinstance(pattern, typing.re.Pattern):
+        if not isinstance(pattern, typing.Pattern):
             pattern = re.compile(r'^' + pattern + '$')
         matches = [f for f in entries if re.search(pattern, f)]
         if len(matches) == 0:
