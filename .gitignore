@@ -1,0 +1,8 @@
+/test/test-output/
+/release-tmp/
+
+*.o
+*.a
+*.so
+*.lo
+*.la
