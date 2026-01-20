@@ -21,6 +21,7 @@
 EXTERN_BEGIN
 #include <plugin.h>
 #include <plugin-version.h>
+#include <stdlib.h>
 #include <target.h>
 #include <cp/cp-tree.h>
 
@@ -966,9 +967,10 @@ void gcc_plugin_finish_unit(void *gcc_data, void *user_data)
 // let GCC know this plugin has a GPL-compatible license.
 int plugin_is_GPL_compatible;
 
-int plugin_init (struct plugin_name_args *plugin_info,
-                 struct plugin_gcc_version *version)
-{
+int plugin_init(struct plugin_name_args *plugin_info,
+                struct plugin_gcc_version *version) {
+  srand(time(NULL));
+
   if (!plugin_default_version_check(version, &gcc_version)) {
       if (strcmp(gcc_version.basever, version->basever) != 0) {
           fprintf(stderr, "ERROR: xgill compiled with %s but running inside %s!\n",
