@@ -17,6 +17,9 @@ def execfile(thefile, globals=None):
 if not os.path.exists("test-output"):
     os.mkdir("test-output")
 
+with open(os.path.join(topdir, "config.json")) as fh:
+    config = json.load(fh)
+
 
 # Simplified version of the body info.
 class Body(dict):
@@ -87,9 +90,9 @@ for name in tests:
 
     def compile(source, env_mods={}):
         if source.endswith(".c"):
-            compile = os.environ.get("CC", "@TARGET_CC@ -x c")
+            compile = os.environ.get("CC", f"{config['TARGET_CC']} -x c")
         else:
-            compile = os.environ.get("CXX", "@TARGET_CC@ -x c++")
+            compile = os.environ.get("CXX", f"{config['TARGET_CC']} -x c++")
             compile += " -std=c++17"
         cmd = "{compile} -c {source} -fplugin={sixgill}".format(
             source=os.path.join(indir, source),

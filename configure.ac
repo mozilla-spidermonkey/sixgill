@@ -174,9 +174,9 @@ int test = VOID_CST;
 dnl ***********************
 dnl Results
 dnl ***********************
-AC_CONFIG_FILES([config.mk])
+AC_CONFIG_FILES([config.mk config.json])
 
-AC_OUTPUT([test/run-test.py])
+AC_OUTPUT()
 
 AC_MSG_RESULT([
 
