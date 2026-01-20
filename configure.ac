@@ -1,6 +1,6 @@
-AC_PREREQ(2.57)
-AC_INIT(sixgill, 0.91, [sg-discuss@sixgill.org])
-AC_CONFIG_HEADER([config.h])
+AC_PREREQ([2.71])
+AC_INIT([sixgill],[0.91],[sg-discuss@sixgill.org])
+AC_CONFIG_HEADERS([config.h])
 
 AC_PROG_CC
 AC_PROG_CXX
@@ -176,7 +176,7 @@ dnl Results
 dnl ***********************
 AC_CONFIG_FILES([config.mk config.json])
 
-AC_OUTPUT()
+AC_OUTPUT
 
 AC_MSG_RESULT([
 
