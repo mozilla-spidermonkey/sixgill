@@ -4413,7 +4413,7 @@ printf "%s\n" "no" >&6; }
 fi
 rm -f core conftest.err conftest.$ac_objext conftest.beam conftest.$ac_ext
 
-ac_config_files="$ac_config_files config.mk"
+ac_config_files="$ac_config_files config.mk config.json"
 
 
 ac_config_files="$ac_config_files test/run-test.py"
@@ -5104,6 +5104,7 @@ do
   case $ac_config_target in
     "config.h") CONFIG_HEADERS="$CONFIG_HEADERS config.h" ;;
     "config.mk") CONFIG_FILES="$CONFIG_FILES config.mk" ;;
+    "config.json") CONFIG_FILES="$CONFIG_FILES config.json" ;;
     "test/run-test.py") CONFIG_FILES="$CONFIG_FILES test/run-test.py" ;;
 
   *) as_fn_error $? "invalid argument: \`$ac_config_target'" "$LINENO" 5;;
