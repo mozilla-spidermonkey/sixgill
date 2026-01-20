@@ -1,3 +1,5 @@
+// Need a simple filename so it can be reset to a known value before the end.
+#line 4 "source.cpp"
 #include <utility>
 #include <type_traits>
 
@@ -181,11 +183,11 @@ class Maybe
   constexpr const T* operator->() const;
 
   /* Returns the contents of this Maybe<T> by ref. Unsafe unless |isSome()|. */
-  constexpr T& ref();
-  constexpr const T& ref() const;
+  constexpr T& ref() { return *static_cast<T*>(nullptr); };
+  constexpr const T& ref() const { return *static_cast<T*>(nullptr); };
 
-  constexpr T& operator*();
-  constexpr const T& operator*() const;
+  constexpr T& operator*() { return ref(); };
+  constexpr const T& operator*() const { return ref(); };
 
   /* If |isSome()|, empties this Maybe and destroys its contents. */
   constexpr void reset() {
@@ -224,4 +226,27 @@ static Maybe<NonCellStruct> nonCellStructTest;
 
 int checksize(std::size_t sss) {
   return sss;
+}
+
+template <typename ExitFunction> struct ScopeExit {
+  ExitFunction mExitFunction;
+  explicit ScopeExit(ExitFunction &&cleanup)
+      : mExitFunction(std::move(cleanup)) {}
+  ~ScopeExit() { mExitFunction(); }
+};
+
+template <typename ExitFunction>
+ScopeExit<ExitFunction> MakeScopeExit(ExitFunction &&cleanup) {
+  return ScopeExit<ExitFunction>(std::move(cleanup));
+}
+
+extern Cell* get_cell();
+
+void anonny_nonny() {
+  Cell *hostage = get_cell();
+  auto guard = MakeScopeExit([&]() { return hostage; });
+#line 1000 "/some/random/dir/fakesource.cpp"
+  auto guard2 = MakeScopeExit([&]() { return hostage; });
+  // Put the filename back or sixgill will spew a warning.
+#line 10000 "source.cpp"
 }

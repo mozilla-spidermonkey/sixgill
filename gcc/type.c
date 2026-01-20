@@ -315,6 +315,24 @@ render_decl(tree decl)
     return str;
 }
 
+// Make a name local to the current translation unit by prepending it with a
+// "translation unit ID" ("TU" and a random number) followed by '#' and the
+// basename of the source file it is defined in. (The latter isn't necessary,
+// but makes it easier to know where something is coming from.)
+static void MakeNameTULocal(tree decl, struct XIL_CString *name) {
+    // Since the process containing this plugin is run once per translation
+    // unit, we can just use a static variable to generate an ID for the whole
+    // process.
+    static int compilation_unit_id = rand();
+    const char* file = DECL_SOURCE_FILE(decl);
+    const char* slash = strrchr(file, '/');
+    if (slash != NULL)
+      file = slash + 1;
+    struct XIL_CString full_name = XIL_AllocCString(11 + strlen(file) + strlen(name->str) + 2);
+    sprintf((char*) full_name.str, "TU%08x#%s:%s", compilation_unit_id, file, name->str);
+    XIL_AssignCString(name, &full_name);
+}
+
 struct XIL_CString XIL_QualifiedName(tree decl)
 {
   gcc_assert(DECL_P(decl));
@@ -339,19 +357,17 @@ struct XIL_CString XIL_QualifiedName(tree decl)
     // structure's name except when it is anonymous (nothing we can do for
     // these yet).
     if (XIL_IsAnonymousCxx(TYPE_NAME(context))) {
-      const char* file = DECL_SOURCE_FILE(decl);
-      while (strchr(file, '/') != NULL)
-        file = strchr(file, '/') + 1;
-      struct XIL_CString full_name = XIL_AllocCString(strlen(file) + strlen(name.str) + 2);
-      sprintf((char*) full_name.str, "%s:%s", file, name.str);
-      return full_name;
+      MakeNameTULocal(decl, &name);
+      return name;
     }
     context_name = XIL_QualifiedName(TYPE_NAME(context));
 
     // watch out for the inner decl in a record which contains the record
     // it defines as its context.
-    if (XIL_IsSelfTypeDecl(decl))
+    if (XIL_IsSelfTypeDecl(decl)) {
+      XIL_ReleaseCString(&name);
       return context_name;
+    }
   }
   else if (TREE_CODE(context) == NAMESPACE_DECL) {
     // watch out for unnamed namespaces (?!).
@@ -716,26 +732,33 @@ int xil_generate_record_types = 1;
 XIL_Type XIL_TranslateRecordType(tree type)
 {
   // get the name to use for the CSU.
-  const char *name = XIL_CSUName(type, NULL);
+  struct XIL_CString name = { NULL, 0 };
+  XIL_SetCString(&name, XIL_CSUName(type, NULL), 0);
 
-  if (!name) {
+  if (!name.str) {
     // no name we know of for this type. we can still get here in cp if we
     // see methods for the structure before the finish_type for the structure.
     // pick up the name at this point.
     tree idnode = TYPE_NAME(type);
     if (idnode && TREE_CODE(idnode) == TYPE_DECL) {
       tree decl_idnode = DECL_NAME(idnode);
-      name = IDENTIFIER_POINTER(decl_idnode);
-      XIL_CSUName(type, name);
+      const char* idname = IDENTIFIER_POINTER(decl_idnode);
+      XIL_SetCString(&name, idname, 0);
+      if (strncmp(idname, "._anon_", 7) == 0) {
+        // gcc generates these anonymous names for lambda closure types, with an
+        // autoincrementing number that restarts for every compilation unit.
+        MakeNameTULocal(idnode, &name);
+      }
+      XIL_CSUName(type, name.str);
     }
 
-    if (!name) {
+    if (!name.str) {
       if (c_dialect_cxx())
-        name = type_as_string(type, TFF_CHASE_TYPEDEF);
+        name.str = type_as_string(type, TFF_CHASE_TYPEDEF);
       else
-        name = "<unknown-type>";
+        name.str = "<unknown-type>";
     }
-    XIL_CSUName(type, name);
+    XIL_CSUName(type, name.str);
   }
 
   // figure out whether we will want to try to fill in this CSU.
@@ -773,16 +796,16 @@ XIL_Type XIL_TranslateRecordType(tree type)
   int ind;
   for (ind = 0; bad_prefix_list[ind]; ind++) {
     const char *bad_prefix = bad_prefix_list[ind];
-    if (!strncmp(name, bad_prefix, strlen(bad_prefix)))
+    if (!strncmp(name.str, bad_prefix, strlen(bad_prefix)))
       pgenerate = NULL;
   }
 
-  XIL_Type xil_csu_type = XIL_TypeCSU(name, pgenerate);
+  XIL_Type xil_csu_type = XIL_TypeCSU(name.str, pgenerate);
 
   if (!generate)
     return xil_csu_type;
 
-  XIL_PushActiveCSU(name);
+  XIL_PushActiveCSU(name.str);
 
   // fill in the fields and other information about the CSU.
 
@@ -831,12 +854,12 @@ XIL_Type XIL_TranslateRecordType(tree type)
   }
 
   // process any annotations read in from file for the type.
-  int count = XIL_GetAnnotationCount(name, false, true);
+  int count = XIL_GetAnnotationCount(name.str, false, true);
   for (ind = 0; ind < count; ind++) {
     const char *where;
     const char *point_text, *annot_text;
     int trusted;
-    XIL_GetAnnotation(name, false, true, ind, &where,
+    XIL_GetAnnotation(name.str, false, true, ind, &where,
                       &point_text, &annot_text, &trusted);
     XIL_ProcessAnnotationRead(type, where, point_text, annot_text, trusted);
   }
