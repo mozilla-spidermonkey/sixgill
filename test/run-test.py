@@ -1,3 +1,4 @@
+import glob
 import json
 import os
 import re
@@ -85,7 +86,12 @@ if not tests:
 for name in tests:
     indir = os.path.join(topdir, "test", name)
     outdir = os.path.join(topdir, "test", "test-output", name)
-    if not os.path.exists(outdir):
+    if os.path.exists(outdir):
+        # Clobber old *.xdb files to allow tests that count the number of
+        # occurrences of certain symbols.
+        for xdbfile in glob.glob(f"{outdir}/*.xdb"):
+            os.remove(xdbfile)
+    else:
         os.mkdir(outdir)
 
     def compile(source, env_mods={}):
