@@ -27,7 +27,10 @@
 
 NAMESPACE_XGILL_USING
 
-const char *USAGE = "xdbfind [options] dbname.db key";
+const char *USAGE = "xdbfind [options] <table> <key>";
+
+ConfigOption db_path(CK_String, "db", XDB_FILE,
+                     "path to the .sqlite file (default: " XDB_FILE ")");
 
 ConfigOption plain_text(CK_Flag, "plain-text", NULL,
                         "print key data as plain text");
@@ -36,7 +39,7 @@ ConfigOption raw_tags(CK_Flag, "raw-tags", NULL,
                       "print key data as raw binary tags");
 
 ConfigOption json(CK_Flag, "json", NULL,
-		  "print key data as a JSON string");
+                 "print key data as a JSON string");
 
 // read a binary tag value from the specified buffer and get whatever
 // hash object it represents from the buffer, returning a reference
@@ -58,6 +61,7 @@ HashObject* ReadSingleValue(Buffer *buf)
 
 int main(int argc, const char **argv)
 {
+  db_path.Enable();
   plain_text.Enable();
   raw_tags.Enable();
   json.Enable();
@@ -69,18 +73,21 @@ int main(int argc, const char **argv)
     return 1;
   }
 
-  // we're only doing one access, we don't need the key cache
-  Xdb::DisableKeyCache();
-
   AnalysisPrepare();
 
-  const char *file = unspecified[0];
-  const char *key = unspecified[1];
+  const char *table = unspecified[0];
+  const char *key   = unspecified[1];
+  const char *file  = db_path.StringValue();
 
-  Xdb *xdb = new Xdb(file, false, false, true);
+  XdbFile xf(file, XdbFile::kReadOnly);
+  if (xf.HasError()) {
+    return 1;  // XdbFile has already logged the error.
+  }
+  Xdb *xdb = xf.Table(table);
 
   if (!xdb->Exists()) {
-    delete xdb;
+    ClearBlockCaches();
+    AnalysisFinish(0);
     return 0;
   }
 
@@ -123,8 +130,7 @@ int main(int argc, const char **argv)
     }
   }
 
-  delete xdb;
-
   ClearBlockCaches();
   AnalysisFinish(0);
+  return 0;
 }

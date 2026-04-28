@@ -18,223 +18,150 @@
 
 #pragma once
 
-// in memory representation and accessing of an XDB database
+// SQLite-backed key/value store for sixgill analysis databases.
+//
+// XdbFile owns a sqlite3* connection to one .sqlite file. Xdb is a handle to
+// one SQL table within that file.
+//
+// Note that this file once defined a custom whole file database format, but now
+// only handles an embedding of analysis data stored with SQLite.
 
-#include "layout.h"
-#include <util/config.h>
+#include <util/buffer.h>
+#include <sqlite3.h>
 
 NAMESPACE_XGILL_BEGIN
 
-// single XDB database
+class Xdb;
+
+class XdbFile
+{
+ public:
+  enum {
+    kCreate   = 1,  // create the file if absent
+    kReadOnly = 2   // open read-only
+  };
+
+  // Open (or defer opening) the .sqlite file at path.
+  // If kCreate is set, the file is created and pragmas are applied now.
+  // Otherwise the open is attempted; if the file is absent the XdbFile
+  // sits dormant (Exists() returns false) until Create() is called.
+  XdbFile(const char *path, uint32_t flags);
+  ~XdbFile();
+
+  const char *GetPath() const { return m_path; }
+  bool HasError() const { return m_error; }
+
+  // Whether the file is open and accessible.
+  bool Exists() const { return m_db != NULL && !m_error; }
+
+  // Open with create + apply pragmas. Idempotent if already open.
+  void Create();
+
+  // COMMIT any pending write transaction.
+  void Flush();
+
+  // Close, delete the file, reopen with Create, and recreate (empty) every
+  // table previously handed out via Table() that was in use.
+  void Recover();
+
+  // Return the Xdb handle for the named SQL table within this file.
+  // Creates the handle if this is the first call for that name.
+  // The returned Xdb* is owned by this XdbFile; do not delete it.
+  // Calling Table() twice with the same name returns the same pointer.
+  Xdb *Table(const char *table_name);
+
+ private:
+  char    *m_path;
+  sqlite3 *m_db;
+  bool     m_read_only;
+  bool     m_error;
+  bool     m_in_tx;
+
+  static const int kMaxTables = 16;
+  int   m_table_count;
+  Xdb  *m_tables[kMaxTables];
+
+  void open_db(bool create);
+  void setup_pragmas();
+  void finalize_file();
+  void begin_tx();
+  void set_error(int rc, const char *context);
+
+  friend class Xdb;
+};
+
 class Xdb
 {
  public:
-  // turn off key caching in generated databases. key caching requires that
-  // the entire key stream be read in before the database can be used,
-  // in exchange for speeding up database queries. key caching is on
-  // by default. does not affect databases that are already open.
-  static void DisableKeyCache();
+  const char *GetTableName() const { return m_table; }
+  bool HasError() const { return m_file->m_error; }
 
- public:
-  // make an XDB for the specified file, creating if it does not exist
-  // and do_create is set, truncating if it does exist and do_truncate
-  // is set. open the database for accessing if it exists.
-  Xdb(const char *file, bool do_create, bool do_truncate, bool read_only);
+  // Whether the SQL table exists in the file. A file that does not exist
+  // yet counts as not existing; a file with an open or read error is fatal.
+  // Callers must check this before any of the operations below.
+  bool Exists() const;
 
-  // flush the Xdb and close its file if necessary, and destroy it.
-  ~Xdb();
-
-  // get a path to the underlying file for the database.
-  const char* GetFilePath() { return m_file; }
-
-  // return whether the database has encountered an error. if an error has
-  // been encountered the only operation that can be performed is delete
-  // (which will close the underlying file).
-  bool HasError() { return m_has_error; }
-
-  // print statistics about this database to stdout. detailed statistics
-  // are available only if key caching is enabled.
-  void PrintStats();
-
-  // flush any changes made by this Xdb to disk.
-  void Flush();
-
-  // is this database available for accessing?
-  bool Exists();
-
-  // create the database if it does not exist, ensuring it can be accessed.
+  // Run CREATE TABLE IF NOT EXISTS for this table, opening the file
+  // first if necessary.
   void Create();
 
-  // truncate the database, clearing all entries.
-  void Truncate();
+  // Print row count and total value bytes to logfile.
+  void PrintStats();
 
-  // for these functions which use buffers, the pos and base fields must
-  // be equal, i.e. no data in the buffer has yet been consumed/added.
+  // Key/value operations.  Keys are NUL-terminated byte strings;
+  // values are opaque BLOBs.
+  bool HasKey (const Buffer *key);
+  bool Find   (const Buffer *key, Buffer *out);
+  bool Add    (const Buffer *key, const Buffer *val);
+  void Replace(const Buffer *key, const Buffer *val);
 
-  // returns whether there is a value associated with the key buffer.
-  bool HasKey(Buffer *key);
-
-  // returns stream id of key or zero if not found.
-  uint32_t LookupKey(Buffer *key);
-
-  // store into the data buffer the value associated with the key buffer.
-  // true on success, false on not found.
-  bool Find(Buffer *key, Buffer *data);
-
-  // add an association between the values in the key buffer and data buffer.
-  // true on success, false on existing key.
-  bool Add(Buffer *key, Buffer *data);
-
-  // replace the value associated with the key buffer with the contents
-  // of the data buffer. functions as Insert() if there is no value
-  // associated with the key.
-  void Replace(Buffer *key, Buffer *data);
-
-  // append to the value associated with the key buffer the contents
-  // of the data buffer. functions as Insert() if there is no value
-  // associated with the key.
-  void Append(Buffer *key, Buffer *data);
-
-  // get the range of stream indexes which represent a key/data pair
-  // in the database.
-  uint32_t MinDataStream()
+  // Forward-only iterator over all keys in lexicographic order.
+  class KeyIter
   {
-    Assert(m_fd != -1 && !m_has_error);
-    return XDB_DATA_STREAM_BEGIN;
-  }
-  uint32_t MaxDataStream()
-  {
-    Assert(m_fd != -1 && !m_has_error);
-    return XDB_DATA_STREAM_BEGIN + m_header.data_stream_count - 1;
-  }
-
-  // store into the key buffer the key for the data stream with given index.
-  void LookupKey(uint32_t stream, Buffer *key);
-
- public:
-
-  // all in-memory data for a data stream.
-  struct StreamInfo
-  {
-    // identifier of this data stream.
-    uint32_t stream;
-
-    // the hash entry read for this stream. out of sync with
-    // the file if xdb->m_hash_dirty is set for the xdb and
-    // xdb->m_hash_dirty_stream >= stream
-    XdbFile::HashStreamEntry hash_entry;
-
-    // the key entry data read for this stream. not used if key caching
-    // is disabled. out of sync with the file if key_dirty is set.
-    XdbFile::KeyStreamEntry key_entry;
-    bool key_dirty;
-
-    StreamInfo();
-    ALLOC_OVERRIDE(g_alloc_XdbStreamInfo);
+   public:
+    bool Next(Buffer *key);
+    ~KeyIter();
+   private:
+    sqlite3_stmt *m_stmt;
+    explicit KeyIter(sqlite3_stmt *stmt) : m_stmt(stmt) {}
+    KeyIter(const KeyIter &) = delete;
+    KeyIter &operator=(const KeyIter &) = delete;
+    friend class Xdb;
   };
+  KeyIter Keys();
 
  private:
+  XdbFile *m_file;
+  char    *m_table;
 
-  // path to the underlying file. owned by this Xdb.
-  char *m_file;
+  char *m_sql_schema;
+  char *m_sql_find;
+  char *m_sql_has;
+  char *m_sql_add;
+  char *m_sql_replace;
+  char *m_sql_keys;
+  char *m_sql_stats;
 
-  // file descriptor for the underlying file. -1 if the file is not opened
-  // (we opened without do_create set and the file doesn't exist).
-  int m_fd;
+  sqlite3_stmt *m_stmt_find;
+  sqlite3_stmt *m_stmt_has;
+  sqlite3_stmt *m_stmt_add;
+  sqlite3_stmt *m_stmt_replace;
 
-  // whether the underlying file descriptor is read-only.
-  bool m_read_only;
+  explicit Xdb(XdbFile *file, const char *table);
+  ~Xdb();
+  Xdb(const Xdb &) = delete;
+  Xdb &operator=(const Xdb &) = delete;
 
-  // error encountered while accessing the file.
-  bool m_has_error;
+  void build_sql();
+  void prepare_stmts();
+  void ensure_prepared();
+  void finalize_stmts();
+  void set_error(int rc, const char *context);
 
-  // header data. out of sync with file if m_header_dirty is set.
-  // the header's file_size is always in sync with the file.
-  XdbFile::FileHeader m_header;
-  bool m_header_dirty;
+  static void bind_key(sqlite3_stmt *stmt, int idx, const Buffer *key);
+  static void bind_val(sqlite3_stmt *stmt, int idx, const Buffer *val);
 
-  // all known stream information, indexed by the stream number.
-  Vector<StreamInfo*> m_stream_list;
-
-  typedef HashTable<uint32_t,StreamInfo*,UIntHash> XdbHash;
-
-  // fast lookup of information on streams for a given hash value.
-  // values in here are shared with m_stream_list.
-  XdbHash m_stream_hash;
-
-  // there is some key in the database which is dirty.
-  // we don't keep a master list of which keys are dirty so to flush
-  // we need to scan all the keys in the database. not used if key caching
-  // is disabled.
-  bool m_keys_dirty;
-
-  // indicates which portions of the hash stream are dirty (if any).
-  // all hash streams >= m_hash_dirty_stream need to be written out to disk.
-  // not used if key caching is disabled. hash stream entries only become
-  // dirty for newly created entries in the database; if m_hash_dirty is set,
-  // m_keys_dirty will also be set.
-  bool m_hash_dirty;
-  uint32_t m_hash_dirty_stream;
-
-  // whether key caching is enabled on this hash.
-  bool m_key_cache_enabled;
-
- private:
-
-  // compute the hash for the specified key, according to
-  // the database's hash method.
-  uint32_t do_hash(const uint8_t *key, uint32_t key_length);
-
-  // wrappers for file access functions. set m_error field and print
-  // an error message if an error is encountered.
-  void do_seek(uint64_t offset);
-  void do_truncate(uint64_t size);
-  void do_write(void *base, size_t length);
-  void do_read(void *base, size_t length);
-
-  // prepare the stream hash and stream list for adding stream information.
-  // if there is already data in these it will be cleared
-  void InitStreamHash();
-
-  // get a copy of the layout for a stream (which may be data or special).
-  XdbFile::StreamLayout GetStreamLayout(uint32_t stream);
-
-  // get a pointer inside stream_hash to the info for a data stream.
-  StreamInfo* GetDataStream(uint32_t stream);
-
-  // read in the entire hash or key streams and store in stream_hash.
-  void ReadHashStream();
-  void ReadKeyStream();
-
-  // read in the key stream entry at the specified offset into the key stream
-  // and store it in key_entry.
-  void ReadKeyStreamEntry(uint32_t key_offset,
-                          XdbFile::KeyStreamEntry *key_entry);
-
-  // look up a data stream layout for the specified key from disk.
-  // layout_offset is set to the absolute file position of the layout,
-  // and layout is filled in with that layout. true if key was found,
-  // false on not found or error.
-  bool GetKeyLayout(Buffer *key, uint64_t *layout_offset,
-                    XdbFile::StreamLayout *layout);
-
-  // update the next or prev entry (according to update_next)
-  // for the source_id stream to refer to target_id. if source_id
-  // is zero then either the first or last id in the file will be updated.
-  void ChangeStreamLink(uint32_t source_id, uint32_t target_id,
-                        bool update_next);
-
-  // fixup the database to mark layout as the last stream.
-  void StreamLinkAppend(XdbFile::StreamLayout *layout);
-
-  // update the on-disk length of a key entry to a new length,
-  // and reallocate it if necessary. do_copy indicates whether
-  // to copy the old data over if a reallocation is performed.
-  void UpdateLength(XdbFile::StreamLayout *layout,
-                    uint32_t new_length, bool do_copy);
-
-  // insert a new key/data pair into the database
-  void InsertEntry(Buffer *key, Buffer *data);
+  friend class XdbFile;
 };
 
 NAMESPACE_XGILL_END

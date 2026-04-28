@@ -87,10 +87,11 @@ for name in tests:
     indir = os.path.join(topdir, "test", name)
     outdir = os.path.join(topdir, "test", "test-output", name)
     if os.path.exists(outdir):
-        # Clobber old *.xdb files to allow tests that count the number of
+        # Clobber old database files to allow tests that count the number of
         # occurrences of certain symbols.
-        for xdbfile in glob.glob(f"{outdir}/*.xdb"):
-            os.remove(xdbfile)
+        for pat in ["*.sqlite", "*.sqlite-wal", "*.sqlite-shm", "*.xdb"]:
+            for f in glob.glob(os.path.join(outdir, pat)):
+                os.remove(f)
     else:
         os.mkdir(outdir)
 
@@ -110,20 +111,20 @@ for name in tests:
         os.environ.update(env_mods)
         return check_output(["/bin/sh", "-c", cmd], text=True)
 
-    def load_db_entry(dbname, pattern, require=True):
-        output = check_output([os.path.join(bindir, "xdbkeys"), dbname + ".xdb"], universal_newlines=True)
+    def load_db_entry(table, pattern, require=True):
+        output = check_output([os.path.join(bindir, "xdbkeys"), table], universal_newlines=True)
         entries = output.splitlines()
         if not isinstance(pattern, typing.Pattern):
             pattern = re.compile(r'^' + pattern + '$')
         matches = [f for f in entries if re.search(pattern, f)]
         if len(matches) == 0:
             if require:
-                raise Exception(f"entry /{pattern.pattern}/ not found in {dbname}")
+                raise Exception(f"entry /{pattern.pattern}/ not found in table {table}")
             return []
         if len(matches) > 1:
-            raise Exception(f"multiple entries found for /{pattern.pattern}/ in {dbname}")
+            raise Exception(f"multiple entries found for /{pattern.pattern}/ in table {table}")
 
-        output = check_output([os.path.join(bindir, "xdbfind"), "-json", dbname + ".xdb", matches[0]], universal_newlines=True)
+        output = check_output([os.path.join(bindir, "xdbfind"), "-json", table, matches[0]], universal_newlines=True)
         return json.loads(output)
 
     def process_body(body):

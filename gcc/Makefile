@@ -23,7 +23,7 @@ XGILL_OBJS= xgill.o type.o variable.o tree.o annot.o missing.o
 all: xgill.so
 
 xgill.so: $(XGILL_OBJS) ../bin/libxgill.a
-	$(CXX) -shared -fPIC -o $@ $^ -lstdc++ ${HOST_LDFLAGS} -lz -Wl,-Bstatic -lgmp -Wl,-Bdynamic
+	$(CXX) -shared -fPIC -o $@ $^ -lstdc++ ${HOST_LDFLAGS} -lz -lsqlite3 -Wl,-Bstatic -lgmp -Wl,-Bdynamic
 
 # Depend on config.mk so that switching to a different GCC (and therefore
 # different plugin headers) rebuilds everything.

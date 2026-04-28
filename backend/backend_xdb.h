@@ -27,8 +27,15 @@ NAMESPACE_XGILL_BEGIN
 
 extern TransactionBackend backend_Xdb;
 
-// interface which other backends can use to access databases.
-Xdb* GetDatabase(const char *name, bool do_create);
+enum class CreateMode { Create, DontCreate };
+
+// Return the Xdb handle for the named table, opening/creating as needed.
+// Returns NULL for source-archive tables when XGILL_KEEP_SOURCE is unset.
+Xdb* GetDatabase(const char *table_name, CreateMode mode);
+
+// Commit any pending write transactions on all open databases, releasing
+// write locks so concurrent plugin processes can proceed.
+void FlushDatabases();
 
 // get the contents of xdb at key and uncompress them into data.
 // returns whether the find was successful.
@@ -39,21 +46,11 @@ void XdbReplaceCompress(Xdb *xdb, String *key, Buffer *data);
 
 NAMESPACE_BEGIN(Backend)
 
-// clear out all entries from a database.
-TAction* XdbClear(Transaction *t,
-                  const char *db_name);
-
 // replace an entry in a database with the specified value.
 TAction* XdbReplace(Transaction *t,
                     const char *db_name,
                     TOperand *key,
                     TOperand *value);
-
-// append an entry in a database with the specified value.
-TAction* XdbAppend(Transaction *t,
-                   const char *db_name,
-                   TOperand *key,
-                   TOperand *value);
 
 // return the contents of an entry in a database.
 // 0-length string if there is no entry for the specified key.

@@ -54,10 +54,6 @@ TAction* HashRunIfEmpty(Transaction *t,
                         const char *hash_name,
                         TAction *action);
 
-// clear the database if the specified hash does not exist.
-TAction* XdbClearIfNotHash(Transaction *t,
-                           const char *db_name,
-                           const char *hash_name);
 
 NAMESPACE_END(Compound)
 NAMESPACE_END(Backend)

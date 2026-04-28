@@ -25,6 +25,7 @@
 
 use strict;
 use IO::Handle;
+use Cwd qw(abs_path);
 
 #################################
 # environment specific settings #
@@ -53,6 +54,11 @@ die "Bad wrapper directory: $wrap_dir" if (not (-e "$wrap_dir/basecc"));
 # util/alloc.h).
 my $xmanager = "xmanager";
 my $xsource = "xsource";
+
+# whether to run an xmanager server to mediate cc1plus writes.
+#  0: cc1plus writes directly to xdb.sqlite in the result directory.
+#  1: cc1plus sends everything to an xmanager process that writes to xdb.sqlite.
+my $use_xmanager = 1;
 
 # optional file with annotations from the web interface.
 my $ann_file = "";
@@ -87,6 +93,11 @@ OUT->autoflush(1);  # don't buffer writes to the main log.
 STDOUT->fdopen(\*OUT, "w");
 STDERR->fdopen(\*OUT, "w");
 
+# Export the result directory as an absolute path so backend writers (cc1plus
+# plugin, xsource, xmanager) all open xdb.sqlite in the right place regardless
+# of each process's working directory.
+$ENV{XGILL_OUTPUT_DIR} = abs_path($result_dir);
+
 chdir $result_dir;
 
 run_build();
@@ -119,9 +130,16 @@ sub run_build
     my $log_file = "$result_dir/build_manager.log";
 
     if (!$pid) {
-        # this is the child process, fork another process to run a manager.
-        defined(my $pid = fork) or die;
-        exec("$xmanager > $log_file 2>&1") if (!$pid);
+        # this is the child process.
+
+        my $manager_pid;
+        my $address = "";
+
+        if ($use_xmanager) {
+            # fork a process to run a manager.
+            defined($manager_pid = fork) or die;
+            exec("$xmanager > $log_file 2>&1") if (!$manager_pid);
+        }
 
         # open new streams to redirect stdout and stderr.
         open(LOGOUT, "> $result_dir/build.log");
@@ -129,7 +147,7 @@ sub run_build
         STDOUT->fdopen(\*LOGOUT, "w");
         STDERR->fdopen(\*LOGERR, "w");
 
-        my $address = get_manager_address($log_file);
+        $address = get_manager_address($log_file) if ($use_xmanager);
 
         # write the configuration file for the wrapper script.
         open(CONFIG, "> $wrap_dir/xgill.config");
@@ -148,12 +166,19 @@ sub run_build
         clean_project() if ($do_clean);
         build_project();
 
-        # signal the manager that it's over.
-        system("$xsource -remote=$address -end-manager");
+        if ($use_xmanager) {
+            # signal the manager that it's over.
+            system("$xsource -remote=$address -end-manager");
 
-        # wait for the manager to clean up and terminate.
-        print "Waiting for manager to finish...\n";
-        waitpid($pid, 0);
+            # wait for the manager to clean up and terminate.
+            print "Waiting for manager to finish...\n";
+            waitpid($manager_pid, 0);
+        } else {
+            # cc1plus wrote directly to the database, so no xmanager shutdown
+            # ran the XdbFile finalization. Do it here, now that every compiler
+            # process has exited.
+            finalize_databases();
+        }
 
         # build is finished, the complete run can resume.
         exit;
@@ -165,4 +190,21 @@ sub run_build
     print "build finished: ";
     print scalar(localtime());
     print "\n";
+}
+
+# Fold each database's write-ahead log back into the main file and switch it to
+# a rollback journal, so the result is a single self-contained .sqlite file with
+# no -wal/-shm sidecars. This mirrors XdbFile::finalize_file(), which runs on the
+# xmanager path when the manager shuts down; for direct cc1plus writes there is
+# no such shutdown, so we do it explicitly once all writers have finished.
+sub finalize_databases
+{
+    my $dir = $ENV{XGILL_OUTPUT_DIR};
+    for my $db ("xdb.sqlite", "xdb-source.sqlite") {
+        my $path = "$dir/$db";
+        next if (not -e $path);
+        system("sqlite3", $path,
+               "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE;") == 0
+          or warn "WARNING: could not finalize WAL for $path\n";
+    }
 }

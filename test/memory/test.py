@@ -31,17 +31,17 @@ def matching_edges(body, expect):
             return False
     return True
 
-f = load_db_entry("src_body", "nested")
+f = load_db_entry("body", "nested")
 assert(len(f) == 3)  # outer body, two loops
 inner, outer, main = f
 assert(matching_edges(main, ["Loop", "Assume"]))
 assert(matching_edges(outer, ["Assume", "Loop", "Assume", "Assign"]))
 assert(matching_edges(inner, ["Assume", "Assign"]))
 
-f = load_db_entry("src_body", "noloop")
+f = load_db_entry("body", "noloop")
 assert(len(f) == 1)  # do { ... } while(0) not treated as a loop
 
-f = load_db_entry("src_body", "basic")
+f = load_db_entry("body", "basic")
 assert(len(f) == 2)  # outer body, loop
 loop, main = f
 assert(matching_edges(main, [
@@ -54,7 +54,7 @@ assert(matching_edges(loop, [
     "Assign",  # a++
 ]))
 
-f = load_db_entry("src_body", "gotos")
+f = load_db_entry("body", "gotos")
 assert(len(f) == 2)  # loop manufactured from goto
 loop, main = f
 assert(matching_edges(loop, [
@@ -69,7 +69,7 @@ assert(matching_edges(main, [
     "Assume",  # *a is zero (termination condition)
 ]))
 
-f = load_db_entry("src_body", "irreducible")
+f = load_db_entry("body", "irreducible")
 assert(len(f) == 2)  # Single loop head (label 'L:')
 loop, main = f
 # Apparently old versions unwrapped this a different way:
@@ -104,7 +104,7 @@ else:
     # what it used to do, but what it's doing now makes sense.
     assert(len(main["LoopIsomorphic"]) == 1)
 
-f = load_db_entry("src_body", "more_irreducible")
+f = load_db_entry("body", "more_irreducible")
 assert(len(f) in (4, 2))  # It's complicated. It used to be more complicated.
 # I'm not sure what it was doing before, but hand-checking the current CFG
 # seems to be doing the right thing (if you ignore that Assume nodes involving
@@ -115,7 +115,7 @@ assert(len(f) in (4, 2))  # It's complicated. It used to be more complicated.
 # Rely on the plugin's assertions for testing all remaining functions in loop.c.
 
 compile("goto_loop.cc")
-f = load_db_entry("src_body", re.compile(r"goto_into_loop\("))
+f = load_db_entry("body", re.compile(r"goto_into_loop\("))
 assert(len(f) == 3)  # inner loop, outer loop, function
 inner, outer, main = f
 assert(matching_edges(main, ["Assign", "Loop", "Assign", "Assign", "Loop", "Assume", "Assign"]))

@@ -19,8 +19,24 @@
 #include "backend_xdb.h"
 #include "backend_util.h"
 #include <xdb/xdb.h>
+#include <imlang/storage.h>
+#include <string.h>
+#include <stdlib.h>
 
 NAMESPACE_XGILL_BEGIN
+
+static bool is_keeping_source() {
+  const char *keep_source_env = getenv("XGILL_KEEP_SOURCE");
+  return keep_source_env && *keep_source_env && *keep_source_env != '0';
+}
+
+// Returns true if table_name names a file containing pre- or post-processed
+// source code.
+static bool is_source_table(const char *table_name)
+{
+  return strcmp(table_name, SOURCE_DATABASE)  == 0 ||
+         strcmp(table_name, PREPROC_DATABASE) == 0;
+}
 
 /////////////////////////////////////////////////////////////////////
 // backend data
@@ -28,73 +44,91 @@ NAMESPACE_XGILL_BEGIN
 
 BACKEND_IMPL_BEGIN
 
-// name and handle for an open database.
-struct XdbInfo {
-  String *name;       // holds a reference
-  Xdb *xdb;
+static XdbFile *g_xdb_main   = NULL;
+static XdbFile *g_xdb_source = NULL;
 
-  XdbInfo() : name(NULL), xdb(NULL) {}
-};
+// Returns the filesystem path to use for the named xdb base file. If
+// XGILL_OUTPUT_DIR is set, returns "<dir>/<base>"; otherwise returns <base>
+// unchanged (sqlite resolves it against cwd).
+static const char *get_xdb_path(const char *base)
+{
+  static const char *dir = getenv("XGILL_OUTPUT_DIR");
+  if (!dir || !*dir) return base;
+  // Two-slot cache: slot 0 for XDB_FILE, slot 1 for XDB_SOURCE_FILE.
+  static char *cache[2] = {NULL, NULL};
+  int slot = strcmp(base, XDB_SOURCE_FILE) == 0 ? 1 : 0;
+  if (!cache[slot]) {
+    size_t n = strlen(dir) + 1 + strlen(base) + 1;
+    cache[slot] = (char*) malloc(n);
+    snprintf(cache[slot], n, "%s/%s", dir, base);
+  }
+  return cache[slot];
+}
 
-// list of all opened databases.
-Vector<XdbInfo> databases;
-
-// whether the databases have been cleared. no further access can happen.
-bool cleared_databases = false;
+static XdbFile *get_xdb_file(const char *table_name, CreateMode mode)
+{
+  if (is_source_table(table_name)) {
+    static bool keepingSource = is_keeping_source();
+    if (!g_xdb_source && keepingSource) {
+      g_xdb_source = new XdbFile(get_xdb_path(XDB_SOURCE_FILE),
+                                 mode == CreateMode::Create ? XdbFile::kCreate : 0);
+    }
+    return g_xdb_source;
+  }
+  if (!g_xdb_main) {
+    g_xdb_main = new XdbFile(get_xdb_path(XDB_FILE),
+                             mode == CreateMode::Create ? XdbFile::kCreate : 0);
+  }
+  return g_xdb_main;
+}
 
 void ClearDatabases()
 {
-  cleared_databases = true;
-  for (size_t dind = 0; dind < databases.Size(); dind++) {
-    const XdbInfo &info = databases[dind];
-    if (info.xdb != NULL)
-      delete info.xdb;
-  }
-  databases.Clear();
+  delete g_xdb_main;
+  g_xdb_main   = NULL;
+  delete g_xdb_source;
+  g_xdb_source = NULL;
 }
 
-XdbInfo& GetDatabaseInfo(const uint8_t *name, bool do_create)
+void FlushDatabases()
 {
-  Assert(!cleared_databases);
-  String *name_str = String::Make((const char*)name);
-  for (size_t dind = 0; dind < databases.Size(); dind++) {
-    if (databases[dind].name == name_str) {
-      XdbInfo &info = databases[dind];
-
-      // create the database if we previously did a non-create access.
-      if (do_create && !info.xdb->Exists()) {
-        info.xdb->Create();
-        if (info.xdb->HasError()) {
-          logout << "ERROR: Corrupt database " << (const char*) name << endl;
-          info.xdb->Truncate();
-        }
-      }
-
-      return info;
-    }
+  if (g_xdb_main) {
+    g_xdb_main->Flush();
   }
-
-  Xdb *xdb = new Xdb((const char*) name, do_create, false, false);
-  if (xdb->HasError()) {
-    logout << "ERROR: Corrupt database " << (const char*) name << endl;
-    xdb->Truncate();
+  if (g_xdb_source) {
+    g_xdb_source->Flush();
   }
-
-  XdbInfo info;
-  info.name = name_str;
-  info.xdb = xdb;
-  databases.PushBack(info);
-
-  return databases.Back();
 }
 
 BACKEND_IMPL_END
 
-Xdb* GetDatabase(const char *name, bool do_create)
+Xdb* GetDatabase(const char *table_name, CreateMode mode)
 {
-  Backend_IMPL::XdbInfo &info =
-    Backend_IMPL::GetDatabaseInfo((const uint8_t*) name, do_create);
-  return info.xdb;
+  XdbFile *file = Backend_IMPL::get_xdb_file(table_name, mode);
+  if (!file) return NULL;
+
+  if (mode == CreateMode::Create && !file->Exists()) {
+    file->Create();
+  }
+
+  Xdb *xdb = file->Table(table_name);
+
+  if (mode == CreateMode::Create) {
+    xdb->Create();  // idempotent: DDL uses IF NOT EXISTS; stmts skipped if prepared
+    if (xdb->HasError()) {
+      logout << "ERROR: Corrupt database table " << table_name << endl;
+      file->Recover();
+      xdb = file->Table(table_name);
+      xdb->Create();
+    }
+  }
+
+  return xdb;
+}
+
+void FlushDatabases()
+{
+  Backend_IMPL::FlushDatabases();
 }
 
 bool XdbFindUncompressed(Xdb *xdb, String *key, Buffer *data)
@@ -104,8 +138,9 @@ bool XdbFindUncompressed(Xdb *xdb, String *key, Buffer *data)
   static Buffer compress_buf;
   bool res = xdb->Find(&key_buf, &compress_buf);
 
-  if (res)
+  if (res) {
     UncompressBufferInUse(&compress_buf, data);
+  }
 
   compress_buf.Reset();
   return res;
@@ -130,24 +165,6 @@ void XdbReplaceCompress(Xdb *xdb, String *key, Buffer *data)
 
 BACKEND_IMPL_BEGIN
 
-bool XdbClear(Transaction *t, const Vector<TOperand*> &arguments,
-              TOperand **result)
-{
-  BACKEND_ARG_COUNT(1);
-  BACKEND_ARG_STRING(0, db_name, db_length);
-
-  XdbInfo &info = GetDatabaseInfo(db_name, false);
-
-  // nothing to do if the database doesn't exist yet
-  if (!info.xdb->Exists())
-    return true;
-
-  info.xdb->Truncate();
-  Assert(!info.xdb->HasError());
-
-  return true;
-}
-
 bool XdbReplace(Transaction *t, const Vector<TOperand*> &arguments,
                 TOperand **result)
 {
@@ -156,32 +173,15 @@ bool XdbReplace(Transaction *t, const Vector<TOperand*> &arguments,
   BACKEND_ARG_STRING(1, key_data, key_length);
   BACKEND_ARG_DATA(2, value_data, value_length);
 
-  XdbInfo &info = GetDatabaseInfo(db_name, true);
+  Xdb *xdb = GetDatabase((const char*) db_name, CreateMode::Create);
+  if (!xdb) return true;  // source table with keep_source off: silently skip
+  Assert(!xdb->HasError());
 
   Buffer keybuf(key_data, key_length);
   Buffer valuebuf(value_data, value_length);
 
-  info.xdb->Replace(&keybuf, &valuebuf);
-  Assert(!info.xdb->HasError());
-
-  return true;
-}
-
-bool XdbAppend(Transaction *t, const Vector<TOperand*> &arguments,
-               TOperand **result)
-{
-  BACKEND_ARG_COUNT(3);
-  BACKEND_ARG_STRING(0, db_name, db_length);
-  BACKEND_ARG_STRING(1, key_data, key_length);
-  BACKEND_ARG_DATA(2, value_data, value_length);
-
-  XdbInfo &info = GetDatabaseInfo(db_name, true);
-
-  Buffer keybuf(key_data, key_length);
-  Buffer valuebuf(value_data, value_length);
-
-  info.xdb->Append(&keybuf, &valuebuf);
-  Assert(!info.xdb->HasError());
+  xdb->Replace(&keybuf, &valuebuf);
+  Assert(!xdb->HasError());
 
   return true;
 }
@@ -193,10 +193,9 @@ bool XdbLookup(Transaction *t, const Vector<TOperand*> &arguments,
   BACKEND_ARG_STRING(0, db_name, db_length);
   BACKEND_ARG_STRING(1, key_data, key_length);
 
-  XdbInfo &info = GetDatabaseInfo(db_name, false);
+  Xdb *xdb = GetDatabase((const char*) db_name, CreateMode::DontCreate);
 
-  // return empty data if the database doesn't exist
-  if (!info.xdb->Exists()) {
+  if (!xdb || !xdb->Exists()) {
     *result = new TOperandString(t, NULL, 0);
     return true;
   }
@@ -206,8 +205,8 @@ bool XdbLookup(Transaction *t, const Vector<TOperand*> &arguments,
   Buffer *valuebuf = new Buffer();
   t->AddBuffer(valuebuf);
 
-  bool success = info.xdb->Find(&keybuf, valuebuf);
-  Assert(!info.xdb->HasError());
+  bool success = xdb->Find(&keybuf, valuebuf);
+  Assert(!xdb->HasError());
 
   if (success) {
     size_t retlen = valuebuf->pos - valuebuf->base;
@@ -232,32 +231,20 @@ bool XdbAllKeys(Transaction *t, const Vector<TOperand*> &arguments,
   BACKEND_ARG_COUNT(1);
   BACKEND_ARG_STRING(0, db_name, db_length);
 
-  XdbInfo &info = GetDatabaseInfo(db_name, false);
+  Xdb *xdb = GetDatabase((const char*) db_name, CreateMode::DontCreate);
 
-  // return an empty list if the database doesn't exist
-  if (!info.xdb->Exists()) {
+  if (!xdb || !xdb->Exists()) {
     *result = new TOperandList(t);
     return true;
   }
 
   TOperandList *list = new TOperandList(t);
 
-  // scratch buffer for the key
-  Buffer key;
-
-  // bulk buffer for storing lots of keys. instead of continually
-  // reallocating this, when we run out of space just make a new buffer.
-  // the buffer will be pretty big to reduce the number of allocations
-  // we end up going (we'll still have to do one allocation per key
-  // for the TOperandString).
   Buffer *buf = NULL;
 
-  for (uint32_t stream = info.xdb->MinDataStream();
-       stream <= info.xdb->MaxDataStream();
-       stream++) {
-    // reset the scratch buffer and get the next key
-    key.Reset();
-    info.xdb->LookupKey(stream, &key);
+  Buffer key;
+  Xdb::KeyIter it = xdb->Keys();
+  while (it.Next(&key)) {
     size_t key_length = key.pos - key.base;
 
     if (!ValidString(key.base, key_length)) {
@@ -273,6 +260,7 @@ bool XdbAllKeys(Transaction *t, const Vector<TOperand*> &arguments,
 
     list->PushOperand(new TOperandString(t, buf->pos, key_length));
     buf->Append(key.base, key_length);
+    key.Reset();
   }
 
   *result = list;
@@ -287,9 +275,7 @@ BACKEND_IMPL_END
 
 static void start_Xdb()
 {
-  BACKEND_REGISTER(XdbClear);
   BACKEND_REGISTER(XdbReplace);
-  BACKEND_REGISTER(XdbAppend);
   BACKEND_REGISTER(XdbLookup);
   BACKEND_REGISTER(XdbAllKeys);
 }
@@ -307,32 +293,12 @@ TransactionBackend backend_Xdb(start_Xdb, finish_Xdb);
 
 NAMESPACE_BEGIN(Backend)
 
-TAction* XdbClear(Transaction *t,
-                  const char *db_name)
-{
-  BACKEND_CALL(XdbClear, 0);
-  call->PushArgument(new TOperandString(t, db_name));
-  return call;
-}
-
 TAction* XdbReplace(Transaction *t,
                     const char *db_name,
                     TOperand *key,
                     TOperand *value)
 {
   BACKEND_CALL(XdbReplace, 0);
-  call->PushArgument(new TOperandString(t, db_name));
-  call->PushArgument(key);
-  call->PushArgument(value);
-  return call;
-}
-
-TAction* XdbAppend(Transaction *t,
-                   const char *db_name,
-                   TOperand *key,
-                   TOperand *value)
-{
-  BACKEND_CALL(XdbAppend, 0);
   call->PushArgument(new TOperandString(t, db_name));
   call->PushArgument(key);
   call->PushArgument(value);

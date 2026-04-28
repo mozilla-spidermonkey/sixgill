@@ -19,16 +19,21 @@
 #include <stdio.h>
 #include <xdb/xdb.h>
 #include <util/config.h>
+#include <imlang/storage.h>
 
 NAMESPACE_XGILL_USING
 
-const char *USAGE = "xdbkeys [options] dbname.db [substring]";
+const char *USAGE = "xdbkeys [options] <table> [substring]";
+
+ConfigOption db_path(CK_String, "db", XDB_FILE,
+                     "path to the .sqlite file (default: " XDB_FILE ")");
 
 ConfigOption print_stats(CK_Flag, "print-stats", NULL,
                          "just print key statistics");
 
 int main(int argc, const char **argv)
 {
+  db_path.Enable();
   print_stats.Enable();
 
   Vector<const char*> unspecified;
@@ -38,36 +43,34 @@ int main(int argc, const char **argv)
     return 1;
   }
 
-  const char *file = unspecified[0];
+  const char *table     = unspecified[0];
   const char *substring = unspecified.Size() > 1 ? unspecified[1] : "";
+  const char *file      = db_path.StringValue();
 
-  Xdb *xdb = new Xdb(file, false, false, true);
+  XdbFile xf(file, XdbFile::kReadOnly);
+  if (xf.HasError()) {
+    return 1;  // XdbFile has already logged the error.
+  }
+  Xdb *xdb = xf.Table(table);
 
   if (!xdb->Exists()) {
-    delete xdb;
     return 0;
   }
 
   if (print_stats.IsSpecified()) {
     xdb->PrintStats();
-    delete xdb;
     return 0;
   }
 
   Buffer key;
-
-  for (uint32_t stream = xdb->MinDataStream();
-       stream <= xdb->MaxDataStream();
-       stream++) {
-    key.Reset();
-    xdb->LookupKey(stream, &key);
-
+  Xdb::KeyIter it = xdb->Keys();
+  while (it.Next(&key)) {
     Assert(ValidString(key.base, key.pos - key.base));
     if (!substring || strstr((const char*)key.base, substring)) {
       logout << (const char *)key.base << endl;
     }
+    key.Reset();
   }
 
-  delete xdb;
   return 0;
 }
