@@ -46,3 +46,16 @@ http://yices.csl.sri.com/download.shtml
 You need to tell the configure script where the unpacked tree is, using:
 ./configure --with-yices=/path/to/yices-1.0.26
 (using the actual path where you unpacked yices).
+
+D. Editor / clangd support
+
+A compile_flags.txt at the repository root lets clangd (and other
+libclang-based tools) parse the main C++ tree with the right include path
+and language standard. Note that the sources include the generated
+config.h, so you must run "./configure" at least once before clangd will
+give clean diagnostics; until then every file reports a missing config.h.
+
+The GCC plugin sources under gcc/ are not covered by compile_flags.txt:
+they are C++ compiled as .c and depend on the GCC plugin headers, whose
+location is machine-specific. If you need in-editor support there, generate
+a compile_commands.json (for example with "bear -- make") instead.
