@@ -24,8 +24,6 @@
 #include "storage.h"
 
 #include <backend/backend_block.h>
-#include <memory/mstorage.h>
-#include <memory/serial.h>
 #include <util/monitor.h>
 
 NAMESPACE_XGILL_USING
@@ -1625,10 +1623,6 @@ extern "C" void XIL_WriteGenerated()
       ProcessWriteList(t);
   }
 
-  // the CSU database may be empty but all the CSUs the escape analysis will
-  // need are still in memory.
-  EscapeUseLocalCSUs();
-
   for (size_t ind = 0; ind < g_write_blocks.Size(); ind++) {
     BlockCFG *cfg = g_write_blocks[ind];
 
@@ -1669,37 +1663,6 @@ extern "C" void XIL_WriteGenerated()
     SplitLoops(cfg, &split_cfgs);
     AddPointAnnotations(split_cfgs);
 
-#ifdef FRONTEND_PROCESS_CALLGRAPH
-    // remember the direct callees of this function.
-    Vector<Variable*> callees;
-    bool indirect_callee = false;
-
-    // do callgraph and escape processing.
-    for (size_t cind = 0; cind < split_cfgs.Size(); cind++) {
-      EscapeProcessCFG(split_cfgs[cind]);
-      CallgraphProcessCFG(split_cfgs[cind], &callees, &indirect_callee);
-    }
-
-    // add the direct call edges to the callgraph hash. only do this for
-    // functions; ignore calls from global variable initializers.
-    if (cfg->GetId()->Kind() == B_FunctionWhole) {
-      TOperand *key_arg =
-        new TOperandString(t, cfg->GetId()->Function()->Value());
-      for (size_t cind = 0; cind < callees.Size(); cind++) {
-        const char *name = callees[cind]->GetName()->Value();
-        TOperand *callee_arg = new TOperandString(t, name);
-
-        t->PushAction(
-          Backend::HashInsertValue(t, CALLGRAPH_EDGES, key_arg, callee_arg));
-      }
-
-      if (indirect_callee) {
-        t->PushAction(
-          Backend::HashInsertKey(t, CALLGRAPH_INDIRECT, key_arg));
-      }
-    }
-#endif // FRONTEND_PROCESS_CALLGRAPH
-
     Assert(split_cfgs.Size());
     WriteUInt32(&g_data_buf, split_cfgs.Size());
 
@@ -1716,7 +1679,6 @@ extern "C" void XIL_WriteGenerated()
 
   delete t;
 
-  WritePendingEscape();
   AnalysisCleanup();
 }
 

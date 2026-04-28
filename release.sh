@@ -102,10 +102,9 @@ function package() {
   set -e
   cp bin/* $D/sixgill/usr/bin
   cp gcc/xgill.so $D/sixgill/usr/libexec/sixgill/gcc
-  cp scripts/run* $D/sixgill/usr/libexec/sixgill/scripts
+  cp scripts/run_complete $D/sixgill/usr/libexec/sixgill/scripts
   cp scripts/wrap_gcc/* $D/sixgill/usr/libexec/sixgill/scripts/wrap_gcc
   rm $D/sixgill/usr/bin/*.a
-  rm $D/sixgill/usr/bin/{xcheck,xinfer}
   [ -z "$NOSTRIP" ] && strip $D/sixgill/usr/bin/* || true
   ( cd $D && tar -Jcvf - sixgill ) > $D/sixgill.tar.xz
   make_checksum "$D/sixgill.tar.xz"

@@ -9,12 +9,6 @@
 /* End of extern section */
 #undef EXTERN_END
 
-/* Define if you want to use CVC3 */
-#undef HAVE_CVC3
-
-/* Define to 1 if you have the <cvc3/vc.h> header file. */
-#undef HAVE_CVC3_VC_H
-
 /* Define to 1 if you have the <gmp.h> header file. */
 #undef HAVE_GMP_H
 

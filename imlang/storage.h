@@ -44,12 +44,6 @@ NAMESPACE_XGILL_BEGIN
 // database to receive contents of preprocessed files.
 #define PREPROC_DATABASE "file_preprocess.xdb"
 
-// hash name for the callgraph edges to sort from. for the frontend.
-#define CALLGRAPH_EDGES "callgraph_edges"
-
-// hash name for callgraph nodes containing indirect calls. for frontend.
-#define CALLGRAPH_INDIRECT "callgraph_indirect"
-
 // hash names for worklists.
 #define WORKLIST_FUNC_HASH "worklist_func_hash"
 #define WORKLIST_GLOB_HASH "worklist_glob_hash"

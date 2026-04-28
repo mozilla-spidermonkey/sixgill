@@ -63,39 +63,6 @@ IMLANG_OBJS = \
 	imlang/type.o \
 	imlang/variable.o
 
-MEMORY_OBJS = \
-	memory/alias.o \
-	memory/baked.o \
-	memory/mblock.o \
-	memory/callgraph.o \
-	memory/clobber.o \
-	memory/escape.o \
-	memory/modset.o \
-	memory/simplify.o \
-	memory/mstorage.o \
-	memory/summary.o
-
-INFER_OBJS = \
-	infer/expand.o \
-	infer/infer.o \
-	infer/invariant.o \
-	infer/nullterm.o
-
-CHECK_OBJS = \
-	check/checker.o \
-	check/decision.o \
-	check/frame.o \
-	check/path.o \
-	check/propagate.o \
-	check/sufficient.o \
-	check/where.o
-
-SOLVE_OBJS = \
-	solve/constraint.o \
-	solve/solver.o \
-	solve/solver-mux.o \
-	solve/union_find.o
-
 UTIL_OBJS = \
 	util/alloc.o \
 	util/assert.o \
@@ -114,11 +81,12 @@ XDB_OBJS = \
 	xdb/xdb.o
 
 LIB_OBJS = \
-	$(BACKEND_OBJS) \
-	$(MEMORY_OBJS) \
-	$(IMLANG_OBJS) \
-	$(UTIL_OBJS) \
-	$(XDB_OBJS)
+	${BACKEND_OBJS} \
+	${IMLANG_OBJS} \
+	${UTIL_OBJS} \
+	${XDB_OBJS}
+
+MAIN_OBJS = main/xdbfind.o main/xdbkeys.o main/xsource.o main/xmanager.o
 
 XDB_LIB_OBJS = \
 	util/alloc.o \
@@ -128,47 +96,19 @@ XDB_LIB_OBJS = \
 	${XDB_OBJS} \
 	xdb/library.o
 
-CHK_OBJS = \
-	${INFER_OBJS} \
-	${CHECK_OBJS} \
-	${SOLVE_OBJS}
-
 ALL_LIBS = \
-	bin/libxcheck.a \
 	bin/libxgill.a
 
 ALL_BINS = \
-	bin/xcheck \
-	bin/xinfer \
-	bin/xmemlocal \
 	bin/xsource \
 	bin/xdbfind \
-	bin/xdbkeys \
-	bin/xmanager \
-	bin/xdb.so
-
-# additional settings for Yices.
-ifeq ($(USE_YICES),yes)
-CPPFLAGS += -DSOLVER_YICES=1 -I${YICES_DIR}/include
-INCLUDE += solve/solver-yices.h solve/wrapyices.h
-CHK_OBJS += solve/solver-yices.o solve/wrapyices.o
-ALL_LIBS += ${YICES_DIR}/lib/libyices.a
-.have_yices: ${YICES_DIR}/lib/libyices.a ${YICES_DIR}/include/yices_c.h
-else
-.have_yices:
-endif
-
-# additional settings for CVC3.
-ifeq ($(USE_CVC3),yes)
-CPPFLAGS += -DSOLVER_CVC3=1 ${CVC3_CFLAGS}
-INCLUDE += solve/solver-cvc3.h solve/cvc3_interface.h
-CHK_OBJS += solve/solver-cvc3.o solve/cvc3_interface.o
-endif
+ 	bin/xdbkeys \
+ 	bin/xmanager
 
 %.o: %.cpp ${INCLUDE}
 	${CXX} ${CXXFLAGS} ${CPPFLAGS} -fPIC -c $< -o $@
 
-all: .have_yices build-libevent ${ALL_LIBS} ${ALL_BINS} build-plugin # build-elsa
+all: build-libevent ${ALL_LIBS} ${ALL_BINS} build-plugin
 
 # Auto-generated header dependencies — included after 'all' so they don't
 # change the default target.
@@ -199,9 +139,6 @@ bin/libxgill.a: $(LIB_OBJS)
 	rm -f $@
 	ar -r $@ $(LIB_OBJS)
 
-bin/libxcheck.a: ${CHK_OBJS}
-	rm -f $@
-	ar -r $@ ${CHK_OBJS}
 
 ifeq ($(GCC_PLUGIN_SUPPORT),yes)
 build-plugin: $(ALL_LIBS)
@@ -210,7 +147,7 @@ else
 build-plugin: bin/libxgill.a
 endif
 
-BUILD_LIBS = ${ALL_LIBS} ${CVC3_LIBS} ${LDFLAGS}
+BUILD_LIBS = $(ALL_LIBS) $(LDFLAGS)
 
 bin/xdbfind: main/xdbfind.o $(ALL_LIBS)
 	$(CXX) $< -o $@ $(BUILD_LIBS)
@@ -220,18 +157,6 @@ bin/xdbkeys: main/xdbkeys.o $(ALL_LIBS)
 
 bin/xsource: main/xsource.o $(ALL_LIBS)
 	$(CXX) $< -o $@ $(BUILD_LIBS)
-
-bin/xmemlocal: main/xmemlocal.o ${ALL_LIBS}
-	${CXX} $< -o $@ ${BUILD_LIBS}
-
-bin/xbrowse: main/xbrowse.o ${ALL_LIBS}
-	${CXX} $< -o $@ ${BUILD_LIBS}
-
-bin/xinfer: main/xinfer.o ${ALL_LIBS}
-	${CXX} $< -o $@ ${BUILD_LIBS}
-
-bin/xcheck: main/xcheck.o ${ALL_LIBS}
-	${CXX} $< -o $@ ${BUILD_LIBS}
 
 bin/xmanager: main/xmanager.o ${ALL_LIBS}
 	${CXX} libevent/*.o $< -o $@ ${BUILD_LIBS}
@@ -244,24 +169,10 @@ build-libevent: libevent/Makefile
 libevent/Makefile:
 	cd libevent && CPPFLAGS='$(filter-out -Werror,${CPPFLAGS})' ./configure
 
-# Elsa frontend stuff
-
-ifdef DEBUG
-
-build-elsa:
-	$(MAKE) -C elsa debug
-
-else # DEBUG
-
-build-elsa:
-	$(MAKE) -C elsa
-
-endif # DEBUG
-
 # other
 
 clean:
-	rm -f ${LIB_OBJS} ${XDB_LIB_OBJS} ${CHK_OBJS} bin/libmemory.a bin/libimlang.a bin/libxgill.a bin/libxcheck.a ${ALL_BINS} main/*.o $(DEPS)
+	rm -f ${LIB_OBJS} bin/libxgill.a ${ALL_BINS} main/*.o $(DEPS)
 	rm -f config.log config.status
 	$(MAKE) -C gcc clean
 	$(MAKE) -C libevent clean

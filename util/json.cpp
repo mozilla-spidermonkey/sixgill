@@ -20,7 +20,6 @@
 
 #include <imlang/block.h>
 #include <imlang/bit.h>
-#include <memory/serial.h>
 
 NAMESPACE_XGILL_BEGIN
 
@@ -103,33 +102,6 @@ static void FillTagNames()
   ADD_TAG(PEdgeCallArguments);
   ADD_TAG(PEdgeCallInstance);
   ADD_TAG(BlockCFG);
-  ADD_TAG(CallEdgeSet);
-  ADD_TAG(CallEdge);
-  ADD_TAG(EscapeEdgeSet);
-  ADD_TAG(EscapeEdge);
-  ADD_TAG(EscapeEdgeMoveCaller);
-  ADD_TAG(EscapeEdgeMoveCallee);
-  ADD_TAG(EscapeAccessSet);
-  ADD_TAG(EscapeAccess);
-  ADD_TAG(BlockMemory);
-  ADD_TAG(MemoryKindSimplify);
-  ADD_TAG(MemoryKindAlias);
-  ADD_TAG(MemoryKindClobber);
-  ADD_TAG(MemoryGCEntry);
-  ADD_TAG(MemoryGuardEntry);
-  ADD_TAG(MemoryAssumeEntry);
-  ADD_TAG(MemoryReturnEntry);
-  ADD_TAG(MemoryTargetEntry);
-  ADD_TAG(MemoryAssignEntry);
-  ADD_TAG(MemoryArgumentEntry);
-  ADD_TAG(MemoryClobberEntry);
-  ADD_TAG(BlockModset);
-  ADD_TAG(ModsetEntry);
-  ADD_TAG(ModsetAssign);
-  ADD_TAG(ModsetCanGC);
-  ADD_TAG(BlockSummary);
-  ADD_TAG(SummaryAssert);
-  ADD_TAG(SummaryAssume);
   ADD_TAG(Kind);
   ADD_TAG(OpCode);
   ADD_TAG(Width);
@@ -227,8 +199,6 @@ static inline bool CanHaveMultipleInnerTags(tag_t outer, tag_t inner)
     }
   case TAG_Exp:
     return inner == TAG_Exp;
-  case TAG_CallEdgeSet:
-    return inner == TAG_CallEdge;
   case TAG_Type:
     switch (inner) {
     case TAG_TypeFunctionArgument:

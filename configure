@@ -646,10 +646,6 @@ GCC_PLUGIN_HEADERS
 GCC_PLUGIN_SUPPORT
 TARGET_CC
 PLUGIN_CC
-YICES_DIR
-USE_YICES
-USE_CVC3
-CVC3_LIBS
 HOST_CFLAGS
 DEBUG
 HOST_LDFLAGS
@@ -716,7 +712,6 @@ enable_option_checking
 with_gmp
 enable_debug
 enable_track_memory
-with_yices
 with_target_cc
 '
       ac_precious_vars='build_alias
@@ -1359,7 +1354,6 @@ Optional Packages:
   --with-PACKAGE[=ARG]    use PACKAGE [ARG=yes]
   --without-PACKAGE       do not use PACKAGE (same as --with-PACKAGE=no)
   --with-gmp=DIR          Use gmp from directory DIR
-  --with-yices=DIR        Enable support for Yices from directory DIR
   --target-cc=PATH        Compiler that will run with the plugin
 
 Some influential environment variables:
@@ -1603,54 +1597,6 @@ printf "%s\n" "$ac_res" >&6; }
   eval $as_lineno_stack; ${as_lineno_stack:+:} unset as_lineno
 
 } # ac_fn_cxx_check_header_compile
-
-# ac_fn_cxx_try_link LINENO
-# -------------------------
-# Try to link conftest.$ac_ext, and return whether this succeeded.
-ac_fn_cxx_try_link ()
-{
-  as_lineno=${as_lineno-"$1"} as_lineno_stack=as_lineno_stack=$as_lineno_stack
-  rm -f conftest.$ac_objext conftest.beam conftest$ac_exeext
-  if { { ac_try="$ac_link"
-case "(($ac_try" in
-  *\"* | *\`* | *\\*) ac_try_echo=\$ac_try;;
-  *) ac_try_echo=$ac_try;;
-esac
-eval ac_try_echo="\"\$as_me:${as_lineno-$LINENO}: $ac_try_echo\""
-printf "%s\n" "$ac_try_echo"; } >&5
-  (eval "$ac_link") 2>conftest.err
-  ac_status=$?
-  if test -s conftest.err; then
-    grep -v '^ *+' conftest.err >conftest.er1
-    cat conftest.er1 >&5
-    mv -f conftest.er1 conftest.err
-  fi
-  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
-  test $ac_status = 0; } && {
-	 test -z "$ac_cxx_werror_flag" ||
-	 test ! -s conftest.err
-       } && test -s conftest$ac_exeext && {
-	 test "$cross_compiling" = yes ||
-	 test -x conftest$ac_exeext
-       }
-then :
-  ac_retval=0
-else case e in #(
-  e) printf "%s\n" "$as_me: failed program was:" >&5
-sed 's/^/| /' conftest.$ac_ext >&5
-
-	ac_retval=1 ;;
-esac
-fi
-  # Delete the IPA/IPO (Inter Procedural Analysis/Optimization) information
-  # created by the PGI compiler (conftest_ipa8_conftest.oo), as it would
-  # interfere with the next link command; also delete a directory that is
-  # left behind by Apple's compiler.  We do this before executing the actions.
-  rm -rf conftest.dSYM conftest_ipa8_conftest.oo
-  eval $as_lineno_stack; ${as_lineno_stack:+:} unset as_lineno
-  as_fn_set_status $ac_retval
-
-} # ac_fn_cxx_try_link
 ac_configure_args_raw=
 for ac_arg
 do
@@ -4281,87 +4227,6 @@ fi
 
 
 
-ac_fn_cxx_check_header_compile "$LINENO" "cvc3/vc.h" "ac_cv_header_cvc3_vc_h" "$ac_includes_default"
-if test "x$ac_cv_header_cvc3_vc_h" = xyes
-then :
-  printf "%s\n" "#define HAVE_CVC3_VC_H 1" >>confdefs.h
-
-fi
-
-LIBS_SAVED=$LIBS
-LIBS="$LIBS -lcvc3 -lgmp"
-cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-#include <cvc3/vc.h>
-int
-main (void)
-{
-CVC3::Expr expr
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_cxx_try_link "$LINENO"
-then :
-
-printf "%s\n" "#define HAVE_CVC3 1" >>confdefs.h
-
-    CVC3_LIBS="-lcvc3"
-    USE_CVC3="yes"
-else case e in #(
-  e) { printf "%s\n" "$as_me:${as_lineno-$LINENO}: WARNING: cannot find CVC3 libraries" >&5
-printf "%s\n" "$as_me: WARNING: cannot find CVC3 libraries" >&2;}
-    USE_CVC3="no" ;;
-esac
-fi
-rm -f core conftest.err conftest.$ac_objext conftest.beam \
-    conftest$ac_exeext conftest.$ac_ext
-LIBS=$LIBS_SAVED
-
-
-
-
-# Check whether --with-yices was given.
-if test ${with_yices+y}
-then :
-  withval=$with_yices; YICES_DIR=$withval
-fi
-
-if test "x$YICES_DIR" != "x" ; then
-     as_ac_File=`printf "%s\n" "ac_cv_file_${YICES_DIR}/lib/libyices.a" | sed "$as_sed_sh"`
-{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for ${YICES_DIR}/lib/libyices.a" >&5
-printf %s "checking for ${YICES_DIR}/lib/libyices.a... " >&6; }
-if eval test \${$as_ac_File+y}
-then :
-  printf %s "(cached) " >&6
-else case e in #(
-  e) test "$cross_compiling" = yes &&
-  as_fn_error $? "cannot check for file existence when cross compiling" "$LINENO" 5
-if test -r "${YICES_DIR}/lib/libyices.a"; then
-  eval "$as_ac_File=yes"
-else
-  eval "$as_ac_File=no"
-fi ;;
-esac
-fi
-eval ac_res=\$$as_ac_File
-	       { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_res" >&5
-printf "%s\n" "$ac_res" >&6; }
-if eval test \"x\$"$as_ac_File"\" = x"yes"
-then :
-  USE_YICES="yes"
-else case e in #(
-  e) USE_YICES="no"  ;;
-esac
-fi
-
-else
-      USE_YICES="no"
-fi
-
-
-
-
 { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking target compiler" >&5
 printf %s "checking target compiler... " >&6; }
 
@@ -4435,6 +4300,7 @@ else
    { printf "%s\n" "$as_me:${as_lineno-$LINENO}: WARNING: GCC plugin support not available, consider modifying your path to include gcc 4.5 or later" >&5
 printf "%s\n" "$as_me: WARNING: GCC plugin support not available, consider modifying your path to include gcc 4.5 or later" >&2;}
 fi
+
 
 
 ac_fn_cxx_check_header_compile "$LINENO" "print-tree.h" "ac_cv_header_print_tree_h" "
@@ -5766,10 +5632,6 @@ sixgill configuration (Please review)
            * Install:
              - prefix:                  $prefix
 
-           * Solvers:
-             - CVC3:                    $USE_CVC3
-             - Yices:                   $USE_YICES
-
            * GCC Plugin:                $GCC_PLUGIN_SUPPORT
 
 ===============================================================
@@ -5782,10 +5644,6 @@ sixgill configuration (Please review)
 
            * Install:
              - prefix:                  $prefix
-
-           * Solvers:
-             - CVC3:                    $USE_CVC3
-             - Yices:                   $USE_YICES
 
            * GCC Plugin:                $GCC_PLUGIN_SUPPORT
 
