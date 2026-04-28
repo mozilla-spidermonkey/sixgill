@@ -37,31 +37,31 @@ class Vector
 {
  public:
 
-  Vector<T>()
+  Vector()
     : m_data(m_base_data), m_count(0),
       m_capacity(VECTOR_BASE_CAPACITY)
   {}
 
-  Vector<T>(size_t initial_count)
+  Vector(size_t initial_count)
     : m_data(m_base_data), m_count(0),
      m_capacity(VECTOR_BASE_CAPACITY)
   {
     Resize(initial_count);
   }
 
-  Vector<T>(const Vector<T> &o)
+  Vector(const Vector<T> &o)
     : m_data(m_base_data), m_count(0),
       m_capacity(VECTOR_BASE_CAPACITY)
   {
     *this = o;
   }
 
-  ~Vector<T>()
+  ~Vector()
   {
     Clear();
   }
 
-  Vector<T>& operator =(const Vector<T> &o)
+  Vector& operator =(const Vector<T> &o)
   {
     Clear();
 

@@ -83,6 +83,8 @@ class HashObject
       m_ppend(NULL), m_pcount(NULL)
   {}
 
+  virtual ~HashObject() = default;
+
   // get the hash value of this object.
   uint32_t Hash() const { return m_hash; }
 
@@ -292,7 +294,7 @@ class HashCons
  public:
   // create a new table with the specified minimum bucket count.
   // will dynamically resize as the object count subsequently grows/shrinks.
-  HashCons<T>(size_t min_bucket_count = 719);
+  HashCons(size_t min_bucket_count = 719);
 
   // return an object from this table equivalent to o. if there is already
   // an object then that existing object will be returned and the references

@@ -84,13 +84,13 @@ template <class T, class U, class HT>
 class HashTable
 {
  public:
-  HashTable<T,U,HT>(size_t min_bucket_count = 89);
-  HashTable<T,U,HT>(const char *alloc_name, size_t min_bucket_count = 89);
-  ~HashTable<T,U,HT>() { Clear(); }
+  HashTable(size_t min_bucket_count = 89);
+  HashTable(const char *alloc_name, size_t min_bucket_count = 89);
+  ~HashTable() { Clear(); }
 
   // hashtables cannot be copied.
-  HashTable<T,U,HT>(const HashTable<T,U,HT>&) { Assert(false); }
-  HashTable<T,U,HT>& operator =(const HashTable<T,U,HT>&) { Assert(false); }
+  HashTable(const HashTable<T,U,HT>&) { Assert(false); }
+  HashTable& operator =(const HashTable<T,U,HT>&) { Assert(false); }
 
   // get the vector of objects associated with o, NULL if there are none.
   // if force is true a new, empty vector will be created and returned.
@@ -212,11 +212,11 @@ template <class T, class HT>
 class HashSet
 {
  public:
-  HashSet<T,HT>(size_t min_bucket_count = 89)
+  HashSet(size_t min_bucket_count = 89)
     : m_table(min_bucket_count)
   {}
 
-  HashSet<T,HT>(const char *alloc_name, size_t min_bucket_count = 89)
+  HashSet(const char *alloc_name, size_t min_bucket_count = 89)
     : m_table(alloc_name, min_bucket_count)
   {}
 
