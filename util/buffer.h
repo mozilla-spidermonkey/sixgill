@@ -382,9 +382,9 @@ inline void Read32(Buffer *buf, uint32_t *pval)
   buf->pos += 4;
 }
 
-inline void Read64(Buffer *buf, u_int64_t *pval)
+inline void Read64(Buffer *buf, uint64_t *pval)
 {
-  u_int64_t val = 0;
+  uint64_t val = 0;
   val |= ((uint64_t)buf->pos[0]);
   val |= ((uint64_t)buf->pos[1]) << 8;
   val |= ((uint64_t)buf->pos[2]) << 16;
