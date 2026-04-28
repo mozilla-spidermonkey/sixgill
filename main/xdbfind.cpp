@@ -21,10 +21,9 @@
 #include <util/config.h>
 
 #include <imlang/storage.h>
-#include <memory/mstorage.h>
-
 #include <imlang/serial.h>
-#include <memory/serial.h>
+
+#include <backend/backend_xdb.h>
 
 NAMESPACE_XGILL_USING
 
@@ -49,20 +48,6 @@ HashObject* ReadSingleValue(Buffer *buf)
 
   case TAG_BlockCFG:         return BlockCFG::Read(buf);
   case TAG_CompositeCSU:     return CompositeCSU::Read(buf);
-  case TAG_EscapeEdgeSet:    return EscapeEdgeSet::Read(buf);
-  case TAG_EscapeAccessSet:  return EscapeAccessSet::Read(buf);
-  case TAG_CallEdgeSet:      return CallEdgeSet::Read(buf);
-  case TAG_BlockModset:      return BlockModset::Read(buf);
-  case TAG_BlockSummary:     return BlockSummary::Read(buf);
-
-  // special case: get the CFG too.
-  case TAG_BlockMemory: {
-    BlockMemory *mcfg = BlockMemory::Read(buf);
-    BlockCFG *cfg = GetBlockCFG(mcfg->GetId());
-    if (cfg)
-      mcfg->SetCFG(cfg);
-    return mcfg;
-  }
 
   default:
     logout << "ERROR: Unknown top-level tag in entry: "
@@ -141,6 +126,5 @@ int main(int argc, const char **argv)
   delete xdb;
 
   ClearBlockCaches();
-  ClearMemoryCaches();
   AnalysisFinish(0);
 }

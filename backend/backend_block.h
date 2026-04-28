@@ -26,9 +26,6 @@
 
 NAMESPACE_XGILL_BEGIN
 
-// configuration option for the timeout to use when waiting for modsets.
-extern ConfigOption modset_wait;
-
 // hash for adding items to process in the next stage, see functions below.
 #define BLOCK_WORKLIST_NEXT "worklist_next"
 
@@ -43,10 +40,8 @@ TAction* BlockQueryList(Transaction *t, TOperand *query_data,
                         size_t var_result);
 
 // add the results of processing a set of CSUs and/or blocks. list is
-// a compressed series of CompositeCSUs, TAG_Uint32 followed by BlockCFGs,
-// EscapeEdgeSets, EscapeAccessSets, and CallEdgeSets. these will be merged
-// with any previous data. blocks/CSUs are written to databases immediately,
-// escape/callgraph info is kept in caches until a BlockFlushEscape.
+// a compressed series of CompositeCSUs, TAG_Uint32 followed by BlockCFGs.
+// these will be merged with any previous data.
 TAction* BlockWriteList(Transaction *t, TOperand *write_data);
 
 // return whether an annotation CFG has already been processed: there has been
@@ -59,10 +54,6 @@ TAction* BlockQueryAnnot(Transaction *t, const char *db_name,
 // write an annotation CFG stored in annot_data. these CFGs are kept in caches
 // until a BlockFlushAnnotations.
 TAction* BlockWriteAnnot(Transaction *t, TOperand *annot_data);
-
-// flush all written escape/callgraph info to the databases.
-// this is also performed when the backend finishes.
-TAction* BlockFlushEscape(Transaction *t);
 
 // flush all written annotation CFGs to the databases.
 // this is also performed when the backend finishes.
@@ -98,12 +89,6 @@ TAction* BlockCurrentStage(Transaction *t, size_t var_result);
 // the string will be empty if the worklist for the current stage is drained,
 // advances the stage if necessary.
 TAction* BlockPopWorklist(Transaction *t, size_t var_result);
-
-// writes out a modset result for a worklist item. modsets are special as the
-// newly written modset will not be seen when doing lookups until the start
-// of the next stage.
-TAction* BlockWriteModset(Transaction *t, TOperand *key,
-                          TOperand *modset_data);
 
 void MarkRoots();
 

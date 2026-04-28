@@ -19,8 +19,6 @@
 #include "backend_block.h"
 #include "backend_xdb.h"
 #include <imlang/storage.h>
-#include <memory/mstorage.h>
-#include <memory/serial.h>
 #include <util/monitor.h>
 #include <unistd.h>
 
@@ -28,12 +26,6 @@ NAMESPACE_XGILL_BEGIN
 
 // file to read/write worklist information.
 #define WORKLIST_FILE "worklist.sort"
-
-// number of stages to use when writing out the callgraph worklist.
-#define CALLGRAPH_STAGES 5
-
-ConfigOption modset_wait(CK_UInt, "modset-wait", "0",
-  "seconds to wait for modset results before timing out");
 
 BACKEND_IMPL_BEGIN
 
@@ -140,21 +132,6 @@ static AnnotationHash g_annot_body;
 static AnnotationHash g_annot_init;
 static AnnotationHash g_annot_comp;
 
-// sets of escape/callgraph information which the block backend has received.
-typedef HashTable<String*,EscapeEdgeSet*,String> EscapeEdgeHash;
-typedef HashTable<String*,EscapeAccessSet*,String> EscapeAccessHash;
-typedef HashSet<CallEdgeSet*,HashObject> CallEdgeHash;
-static EscapeEdgeHash g_escape_forward;
-static EscapeEdgeHash g_escape_backward;
-static EscapeAccessHash g_escape_accesses;
-static CallEdgeHash g_callers;
-static CallEdgeHash g_callees;
-
-// quickly check whether escape information has been seen.
-// these do not hold references.
-static HashSet<EscapeEdgeSet*,HashObject> g_seen_escape_edges;
-static HashSet<EscapeAccessSet*,HashObject> g_seen_escape_accesses;
-
 // open the block databases if they are not already open.
 void LoadDatabases()
 {
@@ -257,75 +234,6 @@ void RemoveAnnotations(Xdb *xdb, AnnotationHash &hash, String *key)
   }
 }
 
-// for incremental builds, cfg is a newly added annotation; mark any functions
-// affected by this annotation for reanalysis.
-void MarkReanalyzedBlocks(BlockCFG *cfg)
-{
-  static Buffer scratch_buf;
-
-  if (cfg->GetAnnotationKind() == AK_Precondition) {
-    // all callers of the annotated function should be reanalyzed.
-    String *function = cfg->GetId()->Function();
-    Xdb *xdb = GetDatabase(CALLER_DATABASE, true);
-
-    if (XdbFindUncompressed(xdb, function, &scratch_buf)) {
-      Buffer read_buf(scratch_buf.base, scratch_buf.pos - scratch_buf.base);
-      CallEdgeSet *callers = CallEdgeSet::Read(&read_buf);
-
-      for (size_t ind = 0; ind < callers->GetEdgeCount(); ind++) {
-        const CallEdge &edge = callers->GetEdge(ind);
-        if (edge.callee->GetName() == function &&
-            edge.where.id->Kind() != B_Initializer) {
-          String *function = edge.where.id->Function();
-          g_body_reanalyze.Insert(function);
-        }
-      }
-
-      scratch_buf.Reset();
-    }
-  }
-
-  if (cfg->GetAnnotationKind() == AK_Invariant) {
-    // all functions writing to a trace which might affect this invariant
-    // need to be reanalyzed.
-    if (Bit *bit = BlockMemory::GetAnnotationBit(cfg)) {
-      Vector<Trace*> heap_traces;
-      GetUpdateTraces(bit, &heap_traces);
-
-      Xdb *xdb = GetDatabase(ESCAPE_ACCESS_DATABASE, true);
-
-      for (size_t ind = 0; ind < heap_traces.Size(); ind++) {
-        Trace *heap_trace = heap_traces[ind];
-        String *heap_key = GetTraceKey(heap_trace);
-
-        if (!XdbFindUncompressed(xdb, heap_key, &scratch_buf))
-          continue;
-
-        Buffer read_buf(scratch_buf.base, scratch_buf.pos - scratch_buf.base);
-        Vector<EscapeAccessSet*> aset_list;
-        EscapeAccessSet::ReadList(&read_buf, &aset_list);
-
-        for (size_t ind = 0; ind < aset_list.Size(); ind++) {
-          EscapeAccessSet *aset = aset_list[ind];
-          if (aset->GetValue() != heap_trace)
-            continue;
-
-          for (size_t aind = 0; aind < aset->GetAccessCount(); aind++) {
-            const EscapeAccess &access = aset->GetAccess(aind);
-            if (access.kind == EAK_Write &&
-                access.where.id->Kind() != B_Initializer) {
-              String *function = access.where.id->Function();
-              g_body_reanalyze.Insert(function);
-            }
-          }
-        }
-
-        scratch_buf.Reset();
-      }
-    }
-  }
-}
-
 // write out any annotations for info to one of the annotation databases.
 // if there are new annotations, mark any affected functions for reanalysis.
 // updates info to reflect the new state of the annotations.
@@ -373,24 +281,6 @@ void WriteAnnotations(Xdb *xdb, KeyAnnotationInfo *info)
   XdbReplaceCompress(xdb, info->key, &scratch_buf);
   scratch_buf.Reset();
 
-  // if we're doing an incremental build, look for functions to reanalyze
-  // due to newly added annotations.
-  if (g_incremental) {
-    for (size_t ind = 0; ind < info->write_cfgs.Size(); ind++) {
-      BlockCFG *cfg = info->write_cfgs[ind];
-
-      // skip annotations which were included in the old build.
-      bool duplicate = false;
-      for (size_t rind = 0; rind < info->removed_cfgs.Size(); rind++) {
-        if (cfg->GetId()->Loop() == info->removed_cfgs[rind]->GetId()->Loop())
-          duplicate = true;
-      }
-
-      if (!duplicate)
-        MarkReanalyzedBlocks(cfg);
-    }
-  }
-
   // update the lists to reflect the new state.
 
   info->removed_cfgs.Clear();
@@ -398,207 +288,6 @@ void WriteAnnotations(Xdb *xdb, KeyAnnotationInfo *info)
   for (size_t ind = 0; ind < info->write_cfgs.Size(); ind++)
     info->database_cfgs.PushBack(info->write_cfgs[ind]);
   info->write_cfgs.Clear();
-}
-
-// read an escape edge set from buf and combine it with any in memory data.
-EscapeEdgeSet* CombineEscapeEdge(Buffer *buf)
-{
-  Trace *source = NULL;
-  bool forward = false;
-  Vector<EscapeEdge> edges;
-  EscapeEdgeSet::ReadMerge(buf, &source, &forward, &edges);
-
-  EscapeEdgeSet *eset = EscapeEdgeSet::Make(source, forward);
-
-  for (size_t ind = 0; ind < edges.Size(); ind++)
-    eset->AddEdge(edges[ind]);
-  return eset;
-}
-
-// write out the escape edges for a given trace key, and consume references
-// from an escape edge hashtable.
-void WriteEscapeEdges(bool forward, String *key,
-                      Vector<EscapeEdgeSet*> &eset_list)
-{
-  // set the versions for the new edges. only do this if we're doing an
-  // incremental build; if the build is not incremental the versions are zero,
-  // and if we're not in the initial build then the versions are correct.
-  if (g_incremental && g_have_body) {
-    for (size_t ind = 0; ind < eset_list.Size(); ind++) {
-      EscapeEdgeSet *eset = eset_list[ind];
-      for (size_t eind = 0; eind < eset->GetEdgeCount(); eind++) {
-        BlockId *id = eset->GetEdge(eind).where.id;
-        if (id->Kind() != B_Initializer) {
-          VersionId version = g_body_version.LookupSingle(id->Function());
-          eset->SetEdgeVersion(eind, version);
-        }
-      }
-    }
-  }
-
-  Xdb *xdb = forward ?
-      GetDatabase(ESCAPE_EDGE_FORWARD_DATABASE, true)
-    : GetDatabase(ESCAPE_EDGE_BACKWARD_DATABASE, true);
-
-  static Buffer scratch_buf;
-
-  // combine with any edges already in the database for this key.
-  if (XdbFindUncompressed(xdb, key, &scratch_buf)) {
-    Buffer read_buf(scratch_buf.base, scratch_buf.pos - scratch_buf.base);
-    while (read_buf.pos != read_buf.base + read_buf.size) {
-      EscapeEdgeSet *eset = CombineEscapeEdge(&read_buf);
-      if (!eset_list.Contains(eset))
-        eset_list.PushBack(eset);
-    }
-    scratch_buf.Reset();
-  }
-
-  for (size_t ind = 0; ind < eset_list.Size(); ind++) {
-    EscapeEdgeSet *eset = eset_list[ind];
-    EscapeEdgeSet::Write(&scratch_buf, eset);
-  }
-
-  XdbReplaceCompress(xdb, key, &scratch_buf);
-
-  scratch_buf.Reset();
-}
-
-// read an escape access set from buf and combine it with any in memory data.
-EscapeAccessSet* CombineEscapeAccess(Buffer *buf)
-{
-  Trace *value = NULL;
-  Vector<EscapeAccess> accesses;
-  EscapeAccessSet::ReadMerge(buf, &value, &accesses);
-
-  EscapeAccessSet *aset = EscapeAccessSet::Make(value);
-
-  for (size_t ind = 0; ind < accesses.Size(); ind++)
-    aset->AddAccess(accesses[ind]);
-  return aset;
-}
-
-// write out the escape accesses for a given trace key, and consume references
-// from the escape access hashtable.
-void WriteEscapeAccesses(String *key,
-                         Vector<EscapeAccessSet*> &aset_list)
-{
-  // set the versions for the new accesses, as for escape edges.
-  if (g_incremental && g_have_body) {
-    for (size_t ind = 0; ind < aset_list.Size(); ind++) {
-      EscapeAccessSet *aset = aset_list[ind];
-      for (size_t aind = 0; aind < aset->GetAccessCount(); aind++) {
-        BlockId *id = aset->GetAccess(aind).where.id;
-        if (id->Kind() != B_Initializer) {
-          VersionId version = g_body_version.LookupSingle(id->Function());
-          aset->SetAccessVersion(aind, version);
-        }
-      }
-    }
-  }
-
-  Xdb *xdb = GetDatabase(ESCAPE_ACCESS_DATABASE, true);
-
-  static Buffer scratch_buf;
-
-  // combine with any accesses already in the database.
-  if (XdbFindUncompressed(xdb, key, &scratch_buf)) {
-    Buffer read_buf(scratch_buf.base, scratch_buf.pos - scratch_buf.base);
-    while (read_buf.pos != read_buf.base + read_buf.size) {
-      EscapeAccessSet *aset = CombineEscapeAccess(&read_buf);
-      if (!aset_list.Contains(aset))
-        aset_list.PushBack(aset);
-    }
-    scratch_buf.Reset();
-  }
-
-  for (size_t ind = 0; ind < aset_list.Size(); ind++) {
-    EscapeAccessSet *aset = aset_list[ind];
-    EscapeAccessSet::Write(&scratch_buf, aset);
-  }
-
-  XdbReplaceCompress(xdb, key, &scratch_buf);
-
-  scratch_buf.Reset();
-}
-
-// read a call edge set from buf and combine it with any in memory data.
-CallEdgeSet* CombineCallEdge(Buffer *buf)
-{
-  Variable *function = NULL;
-  bool callers = false;
-  Vector<CallEdge> edges;
-  CallEdgeSet::ReadMerge(buf, &function, &callers, &edges);
-
-  CallEdgeSet *cset = CallEdgeSet::Make(function, callers);
-
-  for (size_t ind = 0; ind < edges.Size(); ind++)
-    cset->AddEdge(edges[ind]);
-  return cset;
-}
-
-// write out a set of call edges, and consume references from a call edge hash.
-void WriteCallEdges(bool callers, CallEdgeSet *cset)
-{
-  // set the versions for the new edges, as for escape edges.
-  if (g_incremental && g_have_body) {
-    for (size_t ind = 0; ind < cset->GetEdgeCount(); ind++) {
-      BlockId *id = cset->GetEdge(ind).where.id;
-      if (id->Kind() != B_Initializer) {
-        VersionId version = g_body_version.LookupSingle(id->Function());
-        cset->SetEdgeVersion(ind, version);
-      }
-    }
-  }
-
-  Xdb *xdb = callers ?
-    GetDatabase(CALLER_DATABASE, true)
-    : GetDatabase(CALLEE_DATABASE, true);
-  String *key = cset->GetFunction()->GetName();
-
-  static Buffer scratch_buf;
-
-  if (XdbFindUncompressed(xdb, key, &scratch_buf)) {
-    Buffer read_buf(scratch_buf.base, scratch_buf.pos - scratch_buf.base);
-    CallEdgeSet *new_cset = CombineCallEdge(&read_buf);
-    Assert(new_cset == cset);
-    scratch_buf.Reset();
-  }
-
-  CallEdgeSet::Write(&scratch_buf, cset);
-
-  XdbReplaceCompress(xdb, key, &scratch_buf);
-
-  scratch_buf.Reset();
-}
-
-// write all pending escape/callgraph info to databases.
-void FlushEscape()
-{
-  HashIterate(g_escape_forward)
-    WriteEscapeEdges(true, g_escape_forward.ItKey(),
-                     g_escape_forward.ItValues());
-  g_escape_forward.Clear();
-
-  HashIterate(g_escape_backward)
-    WriteEscapeEdges(false, g_escape_backward.ItKey(),
-                     g_escape_backward.ItValues());
-  g_escape_backward.Clear();
-
-  HashIterate(g_escape_accesses)
-    WriteEscapeAccesses(g_escape_accesses.ItKey(),
-                        g_escape_accesses.ItValues());
-  g_escape_accesses.Clear();
-
-  HashIterate(g_callers)
-    WriteCallEdges(true, g_callers.ItKey());
-  g_callers.Clear();
-
-  HashIterate(g_callees)
-    WriteCallEdges(false, g_callees.ItKey());
-  g_callees.Clear();
-
-  g_seen_escape_edges.Clear();
-  g_seen_escape_accesses.Clear();
 }
 
 // write all pending annotations to databases.
@@ -627,14 +316,6 @@ void FlushAnnotations()
 //
 // #stage0
 // fnlist
-//
-// #stage1
-// fnlist
-//
-// ...
-//
-// #final
-// fnlist (all remaining functions)
 //
 ////////////////////// incremental layout ///////////////////////////
 //
@@ -688,79 +369,13 @@ void WriteWorklistInitial()
 {
   Assert(g_have_body && !g_incremental);
 
-  BackendStringHash *callgraph_hash =
-    GetNamedHash((const uint8_t*) CALLGRAPH_EDGES);
-  BackendStringHash *indirect_hash =
-    GetNamedHash((const uint8_t*) CALLGRAPH_INDIRECT);
-
-  // list of all functions that have not been placed in a stage yet.
   Vector<String*> functions;
-
   HashIterate(g_write_body)
     functions.PushBack(g_write_body.ItKey());
 
   FileOutStream worklist_out(WORKLIST_FILE);
 
-  // functions which are members of stages we've written out.
-  StringSet stage_members;
-
-  for (size_t stage = 0; stage < CALLGRAPH_STAGES; stage++) {
-    // functions to write out in this stage.
-    Vector<String*> stage_functions;
-
-    // scan the functions which don't have a stage yet, try to add them
-    // to this stage.
-    size_t ind = 0;
-    while (ind < functions.Size()) {
-      String *func = functions[ind];
-
-      // functions can go in this stage if all their callees are in a
-      // previously handled stage, and they have no indirect calls.
-      bool missed = false;
-
-      // check for a direct call to a function not previously handled.
-      // treat as handled any function we don't have a body for.
-      Vector<String*> *callees =
-        callgraph_hash ? callgraph_hash->Lookup(func, false) : NULL;
-      if (callees) {
-        for (size_t eind = 0; eind < callees->Size(); eind++) {
-          String *callee = callees->At(eind);
-          if (g_write_body.Lookup(callee) && !stage_members.Lookup(callee))
-            missed = true;
-        }
-      }
-
-      if (indirect_hash && indirect_hash->Lookup(func, false)) {
-        // this function and anything which might transitively call it
-        // will end up in the last stage.
-        missed = true;
-      }
-
-      if (missed) {
-        // this function must go in a later stage.
-        ind++;
-      }
-      else {
-        // add this function to the current stage.
-        stage_functions.PushBack(func);
-        functions[ind] = functions.Back();
-        functions.PopBack();
-      }
-    }
-
-    // write out the contents of this stage.
-    worklist_out << "#stage" << stage << endl;
-    WriteWorklistFunctions(worklist_out, stage_functions);
-    worklist_out << endl;
-
-    // functions we added in this stage can now go in the previous set.
-    for (ind = 0; ind < stage_functions.Size(); ind++)
-      stage_members.Insert(stage_functions[ind]);
-  }
-
-  // the final stage contains all the functions we weren't able to place
-  // in a previous stage.
-  worklist_out << "#final" << endl;
+  worklist_out << "#stage0" << endl;
   WriteWorklistFunctions(worklist_out, functions);
 }
 
@@ -921,33 +536,6 @@ static Vector<Vector<String*>*> g_stage_worklist;
 // is in the WORKLIST_FUNC_NEXT hash.
 static Vector<String*> g_overflow_worklist;
 
-// any modsets to write out at the end of the stage.
-static HashTable<String*,Buffer*,String> g_pending_modsets;
-
-// the names of any modsets we are waiting to receive before starting the
-// next stage. the value is the time at which the wait will timeout.
-static HashTable<String*,uint64_t,String> g_wait_modsets;
-
-// flush any pending modsets to the database.
-void FlushModsets()
-{
-  // flush any pending modsets before advancing the stage.
-  if (!g_pending_modsets.IsEmpty()) {
-    Xdb *modset_xdb = GetDatabase(MODSET_DATABASE, true);
-    HashIterate(g_pending_modsets) {
-      String *key = g_pending_modsets.ItKey();
-      Buffer *buf = g_pending_modsets.ItValueSingle();
-
-      Buffer key_buf((const uint8_t*) key->Value(), strlen(key->Value()) + 1);
-      Buffer write_buf(buf->base, buf->pos - buf->base);
-      modset_xdb->Replace(&key_buf, &write_buf);
-
-      delete buf;
-    }
-    g_pending_modsets.Clear();
-  }
-}
-
 /////////////////////////////////////////////////////////////////////
 // Backend data cleanup
 /////////////////////////////////////////////////////////////////////
@@ -955,16 +543,7 @@ void FlushModsets()
 // write out all block backend data to disk.
 void FinishBlockBackend()
 {
-  // write any escape/callgraph changes. this needs to be done before writing
-  // out the annotations so that g_body_reanalyze uses complete information.
-
-  FlushEscape();
-
-  // write any modset changes. this only does work if we finish prematurely.
-
-  FlushModsets();
-
-  // write out any annotations we found. these may update g_body_reanalyze
+  // write out any annotations we found.
   // so need to be done before the worklist is generated.
 
   FlushAnnotations();
@@ -1295,68 +874,12 @@ bool BlockWriteList(Transaction *t, const Vector<TOperand*> &arguments,
       break;
     }
 
-    // these append to the existing set if there is one.
-
-    case TAG_EscapeEdgeSet: {
-      EscapeEdgeSet *eset = CombineEscapeEdge(&read_buf);
-
-      if (g_seen_escape_edges.Insert(eset))
-        break;
-
-      String *key = GetTraceKey(eset->GetSource());
-
-      Vector<EscapeEdgeSet*> *eset_list = (eset->IsForward()) ?
-          g_escape_forward.Lookup(key, true)
-        : g_escape_backward.Lookup(key, true);
-
-      eset_list->PushBack(eset);
-      break;
-    }
-
-    case TAG_EscapeAccessSet: {
-      EscapeAccessSet *aset = CombineEscapeAccess(&read_buf);
-
-      if (g_seen_escape_accesses.Insert(aset))
-        break;
-
-      String *key = GetTraceKey(aset->GetValue());
-
-      Vector<EscapeAccessSet*> *aset_list =
-        g_escape_accesses.Lookup(key, true);
-
-      aset_list->PushBack(aset);
-      break;
-    }
-
-    case TAG_CallEdgeSet: {
-      CallEdgeSet *cset = CombineCallEdge(&read_buf);
-
-      if (cset->IsCallers())
-        g_callers.Insert(cset);
-      else
-        g_callees.Insert(cset);
-      break;
-    }
-
     default:
       Assert(false);
     }
   }
 
-  if (IsHighVmUsage()) {
-    logout << "WARNING: High memory usage, flushing caches..." << endl;
-    FlushEscape();
-  }
-
   data_buf.Reset();
-  return true;
-}
-
-bool BlockFlushEscape(Transaction *t, const Vector<TOperand*> &arguments,
-		      TOperand **result)
-{
-  BACKEND_ARG_COUNT(0);
-  FlushEscape();
   return true;
 }
 
@@ -1541,42 +1064,12 @@ bool BlockPopWorklist(Transaction *t, const Vector<TOperand*> &arguments,
     worklist->PopBack();
 
     const char *new_function = t->CloneString(function->Value());
-
-    if (modset_wait.IsSpecified()) {
-      uint64_t expires =
-        GetCurrentTime() + (modset_wait.UIntValue() * 1000000);
-      g_wait_modsets.Insert(function, expires);
-    }
-
     *result = new TOperandString(t, new_function);
     return true;
   }
 
-  // the current stage is exhausted, either block or advance to the next stage
-  // depending on whether we are waiting for a modset result. either way
-  // we don't return a function, the worker will have to do another pop.
-
+  // the current stage is exhausted, advance to the next stage.
   *result = new TOperandString(t, "");
-
-  // check for a modset result we are waiting on which hasn't timed out.
-  bool waiting = false;
-  uint64_t time = GetCurrentTime();
-  HashIterate(g_wait_modsets) {
-    if (g_wait_modsets.ItValueSingle() >= time)
-      waiting = true;
-  }
-  if (waiting)
-    return true;
-
-  // clear any modset results which timed out.
-  g_wait_modsets.Clear();
-
-  // flush any pending modsets.
-  FlushModsets();
-
-  // flush any callgraph edges before advancing the stage.
-  FlushEscape();
-
   g_stage++;
 
   if (g_stage >= g_stage_worklist.Size()) {
@@ -1596,25 +1089,6 @@ bool BlockPopWorklist(Transaction *t, const Vector<TOperand*> &arguments,
   return true;
 }
 
-bool BlockWriteModset(Transaction *t, const Vector<TOperand*> &arguments,
-                      TOperand **result)
-{
-  BACKEND_ARG_COUNT(2);
-  BACKEND_ARG_STRING(0, name, name_length);
-  BACKEND_ARG_DATA(1, modset_data, modset_length);
-
-  String *key = String::Make((const char*) name);
-
-  if (g_pending_modsets.Lookup(key))
-    BACKEND_FAIL(arguments[0]);
-
-  Buffer *buf = new Buffer();
-  buf->Append(modset_data, modset_length);
-
-  g_pending_modsets.Insert(key, buf);
-  return true;
-}
-
 BACKEND_IMPL_END
 
 /////////////////////////////////////////////////////////////////////
@@ -1627,7 +1101,6 @@ static void start_Block()
   BACKEND_REGISTER(BlockWriteAnnot);
   BACKEND_REGISTER(BlockQueryList);
   BACKEND_REGISTER(BlockWriteList);
-  BACKEND_REGISTER(BlockFlushEscape);
   BACKEND_REGISTER(BlockFlushAnnotations);
   BACKEND_REGISTER(BlockQueryFile);
   BACKEND_REGISTER(BlockWriteFile);
@@ -1635,7 +1108,6 @@ static void start_Block()
   BACKEND_REGISTER(BlockSeedWorklist);
   BACKEND_REGISTER(BlockCurrentStage);
   BACKEND_REGISTER(BlockPopWorklist);
-  BACKEND_REGISTER(BlockWriteModset);
 }
 
 static void finish_Block()
@@ -1685,12 +1157,6 @@ TAction* BlockWriteAnnot(Transaction *t, TOperand *annot_data)
   return call;
 }
 
-TAction* BlockFlushEscape(Transaction *t)
-{
-  BACKEND_CALL(BlockFlushEscape, 0);
-  return call;
-}
-
 TAction* BlockFlushAnnotations(Transaction *t)
 {
   BACKEND_CALL(BlockFlushAnnotations, 0);
@@ -1736,14 +1202,6 @@ TAction* BlockCurrentStage(Transaction *t, size_t var_result)
 TAction* BlockPopWorklist(Transaction *t, size_t var_result)
 {
   BACKEND_CALL(BlockPopWorklist, var_result);
-  return call;
-}
-
-TAction* BlockWriteModset(Transaction *t, TOperand *key, TOperand *modset_data)
-{
-  BACKEND_CALL(BlockWriteModset, 0);
-  call->PushArgument(key);
-  call->PushArgument(modset_data);
   return call;
 }
 

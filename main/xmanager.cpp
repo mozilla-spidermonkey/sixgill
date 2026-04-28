@@ -33,7 +33,6 @@
 #include <util/monitor.h>
 #include <backend/backend_block.h>
 #include <imlang/storage.h>
-#include <memory/mstorage.h>
 
 NAMESPACE_XGILL_USING
 
@@ -77,7 +76,6 @@ static void termination_handler(int signal)
   close(server_socket);
 
   ClearBlockCaches();
-  ClearMemoryCaches();
   AnalysisFinish(0);
 }
 
@@ -218,8 +216,6 @@ void handle_event(int fd, short, void *v)
           close(server_socket);
 
           ClearBlockCaches();
-          ClearMemoryCaches();
-          AnalysisFinish(0);
         }
       }
 
@@ -339,8 +335,6 @@ int main(int argc, const char **argv)
 #ifdef USE_COUNT_ALLOCATOR
   memory_limit.Enable();
 #endif
-
-  modset_wait.Enable();
 
   Vector<const char*> unspecified;
   bool parsed = Config::Parse(argc, argv, &unspecified);

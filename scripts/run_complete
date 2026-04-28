@@ -30,9 +30,6 @@ use IO::Handle;
 # environment specific settings #
 #################################
 
-# poll file shared with the run_monitor script.
-my $poll_file = "/path/to/poll-file";
-
 # root directory of the project.
 my $build_dir = "/path/to/project";
 die "Need build directory: $build_dir\n" if (not -d $build_dir);
@@ -51,21 +48,14 @@ sub build_project {
 my $wrap_dir = "/path/to/wrap_gcc";
 die "Bad wrapper directory: $wrap_dir" if (not (-e "$wrap_dir/basecc"));
 
-# commands to start the various xgill binaries. timeouts can be specified
-# for the backend analyses here, and a memory limit can be specified for
-# xmanager if desired (and USE_COUNT_ALLOCATOR is defined in util/alloc.h).
+# commands to start the various xgill binaries. a memory limit can be
+# specified for xmanager if desired (and USE_COUNT_ALLOCATOR is defined in
+# util/alloc.h).
 my $xmanager = "xmanager";
 my $xsource = "xsource";
-my $xmemlocal = "xmemlocal -timeout=20";
-my $xinfer = "xinfer -timeout=60";
-my $xcheck = "xcheck -timeout=30";
 
 # optional file with annotations from the web interface.
 my $ann_file = "";
-
-# optional output directory to do a diff against.
-my $old_dir = "";
-die "Need old directory: $old_dir\n" if ($old_dir ne "" && not -d $old_dir);
 
 # prefix directory to strip off source files.
 my $prefix_dir = $build_dir;
@@ -97,33 +87,11 @@ OUT->autoflush(1);  # don't buffer writes to the main log.
 STDOUT->fdopen(\*OUT, "w");
 STDERR->fdopen(\*OUT, "w");
 
-# pids to wait on before exiting. these are collating worker output.
-my @waitpids;
-
 chdir $result_dir;
-
-# to do a partial run, comment out the commands here you don't want to do.
 
 run_build();
 
-run_pass("xmemlocal", $xmemlocal);
-run_pass("xinfer", $xinfer);
-run_pass("xcheck_annot", "$xcheck -check-kind=annotation");
-run_pass("xcheck_rtime", "$xcheck -check-kind=annotation_runtime");
-run_pass("xcheck_oflow", "$xcheck -check-kind=write_overflow");
-
-run_index("index_annot", "annotation");
-run_index("index_rtime", "annotation_runtime");
-run_index("index_oflow", "write_overflow");
-archive_indexes();
-
-# end of run commands.
-
 close(OUT);
-
-for my $pid (@waitpids) {
-    waitpid($pid, 0);
-}
 
 # get the IP address which a freshly created manager is listening on.
 sub get_manager_address
@@ -195,94 +163,6 @@ sub run_build
     waitpid($pid, 0);
 
     print "build finished: ";
-    print scalar(localtime());
-    print "\n";
-}
-
-sub run_pass
-{
-    my ($name, $command) = @_;
-    my $log_file = "$result_dir/manager.$name.log";
-
-    # extra commands to pass to the manager.
-    my $manager_extra = "";
-    $manager_extra .= "-modset-wait=10" if ($name eq "xmemlocal");
-
-    # fork off a manager process for the analysis.
-    defined(my $pid = fork) or die;
-    exec("$xmanager $manager_extra > $log_file 2>&1") if (!$pid);
-
-    my $address = get_manager_address($log_file);
-
-    # write the poll file for this pass.
-    open(POLL, "> $poll_file");
-    print POLL "$command\n";
-    print POLL "$result_dir/$name\n";
-    print POLL "$address\n";
-    close(POLL);
-
-    print "$name started: ";
-    print scalar(localtime());
-    print "\n";
-
-    waitpid($pid, 0);
-    unlink($poll_file);
-
-    print "$name finished: ";
-    print scalar(localtime());
-    print "\n";
-
-    # collate the worker's output into a single file. make this asynchronous
-    # so we can wait a bit and make sure we get all worker output.
-    defined(my $pid = fork) or die;
-
-    if (!$pid) {
-        sleep(20);
-        exec("cat $name.*.log > $name.log");
-    }
-
-    push(@waitpids, $pid);
-}
-
-# the names of all directories containing reports to archive.
-my $indexes;
-
-sub run_index
-{
-    my ($name, $kind) = @_;
-
-    return if (not (-e "report_$kind.xdb"));
-
-    print "$name started: ";
-    print scalar(localtime());
-    print "\n";
-
-    # make an index for the report diff if applicable.
-    if ($old_dir ne "") {
-        system("make_index $kind $old_dir > $name.diff.log");
-        system("mv $kind diff_$kind");
-        $indexes .= " diff_$kind";
-    }
-
-    # make an index for the full set of reports.
-    system("make_index $kind > $name.log");
-    $indexes .= " $kind";
-
-    print "$name finished: ";
-    print scalar(localtime());
-    print "\n";
-}
-
-sub archive_indexes
-{
-    print "archive started: ";
-    print scalar(localtime());
-    print "\n";
-
-    system("tar -czf reports.tgz $indexes");
-    system("rm -rf $indexes");
-
-    print "archive finished: ";
     print scalar(localtime());
     print "\n";
 }

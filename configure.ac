@@ -65,39 +65,6 @@ dnl HOST_CFLAGS="$HOST_CFLAGS -DTRACK_BUFFER_MEMORY"
 
 AC_SUBST(HOST_CFLAGS)
 
-dnl ***********************
-dnl CVC3 support
-dnl ***********************
-AC_CHECK_HEADERS( cvc3/vc.h )
-LIBS_SAVED=$LIBS
-LIBS="$LIBS -lcvc3 -lgmp"
-AC_LINK_IFELSE(
-    [AC_LANG_PROGRAM([#include <cvc3/vc.h>],
-      [CVC3::Expr expr])],
-    [AC_DEFINE(HAVE_CVC3, 1, [Define if you want to use CVC3])]
-    [CVC3_LIBS="-lcvc3"]
-    [USE_CVC3="yes"],
-    [AC_MSG_WARN([cannot find CVC3 libraries])]
-    [USE_CVC3="no"])
-LIBS=$LIBS_SAVED
-AC_SUBST(CVC3_LIBS)
-AC_SUBST(USE_CVC3)
-
-dnl ***********************
-dnl Yices support
-dnl ***********************
-AC_ARG_WITH([yices],
-            [AS_HELP_STRING([--with-yices=DIR],
-              [Enable support for Yices from directory DIR])],
-            [YICES_DIR=$withval])
-if test "x$YICES_DIR" != "x" ; then
-     AC_CHECK_FILE( ${YICES_DIR}/lib/libyices.a, [USE_YICES="yes"], [USE_YICES="no"] )
-else
-     [ USE_YICES="no" ]
-fi
-AC_SUBST(USE_YICES)
-AC_SUBST(YICES_DIR)
-
 dnl **********************
 dnl Sometimes symbols in cc1/cc1plus are extern "C", sometimes mangled C++
 dnl **********************
@@ -185,10 +152,6 @@ sixgill configuration (Please review)
 
            * Install:
              - prefix:                  $prefix
-
-           * Solvers:
-             - CVC3:                    $USE_CVC3
-             - Yices:                   $USE_YICES
 
            * GCC Plugin:                $GCC_PLUGIN_SUPPORT
 
