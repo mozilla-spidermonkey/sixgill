@@ -45,3 +45,7 @@ libevent/test/test-weof
 *.lo
 *.la
 *.d
+
+# clangd: index cache and machine-specific compile database
+/.cache/
+compile_commands.json
