@@ -31,7 +31,7 @@ CXXWARNINGS = -Wno-non-virtual-dtor -Wno-delete-non-virtual-dtor -Wno-template-i
 
 CXXFLAGS += -std=c++17 $(CXXWARNINGS)
 CPPFLAGS = -g ${OPT} -I${PWD} ${HOST_CFLAGS} ${WARNINGS}
-LDFLAGS = ${HOST_LDFLAGS} -lz -lgmp
+LDFLAGS = ${HOST_LDFLAGS} -lz -lsqlite3 -lgmp
 
 # run 'make profile' to enable profiling in generated binaries
 ifdef PROFILE
@@ -77,7 +77,6 @@ UTIL_OBJS = \
 	util/xml.o
 
 XDB_OBJS = \
-	xdb/layout.o \
 	xdb/xdb.o
 
 LIB_OBJS = \
@@ -108,6 +107,8 @@ ALL_BINS = \
 %.o: %.cpp ${INCLUDE}
 	${CXX} ${CXXFLAGS} ${CPPFLAGS} -fPIC -c $< -o $@
 
+.PHONY: all profile build-plugin clean
+
 all: build-libevent ${ALL_LIBS} ${ALL_BINS} build-plugin
 
 # Auto-generated header dependencies — included after 'all' so they don't
@@ -131,14 +132,9 @@ bin:
 profile:
 	$(MAKE) all "PROFILE=1"
 
-bin/xdb.so: $(XDB_LIB_OBJS)
-	rm -f $@
-	${CXX} -shared -fPIC -o $@ $(XDB_LIB_OBJS) $(LDFLAGS)
-
 bin/libxgill.a: $(LIB_OBJS)
 	rm -f $@
 	ar -r $@ $(LIB_OBJS)
-
 
 ifeq ($(GCC_PLUGIN_SUPPORT),yes)
 build-plugin: $(ALL_LIBS)

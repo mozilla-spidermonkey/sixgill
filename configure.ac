@@ -36,6 +36,12 @@ AC_SUBST(HOST_LDFLAGS)
 
 dnl *** check for zlib ***
 AC_CHECK_HEADERS( zlib.h, [], [AC_MSG_ERROR(Zlib must be installed)] )
+
+dnl *** check for sqlite3 ***
+AC_CHECK_HEADERS( sqlite3.h, [], [AC_MSG_ERROR(SQLite3 development headers must be installed)] )
+AC_CHECK_LIB([sqlite3], [sqlite3_open_v2], [],
+             [AC_MSG_ERROR(libsqlite3 must be installed)])
+
 AC_LANG(C++)
 
 dnl *** debug build

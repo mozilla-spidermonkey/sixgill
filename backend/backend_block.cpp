@@ -21,6 +21,8 @@
 #include <imlang/storage.h>
 #include <util/monitor.h>
 #include <unistd.h>
+#include <string.h>
+#include <zlib.h>
 
 NAMESPACE_XGILL_BEGIN
 
@@ -38,7 +40,10 @@ static Xdb *g_body_xdb = NULL;
 static Xdb *g_init_xdb = NULL;
 static Xdb *g_comp_xdb = NULL;
 
-// databases for storing file contents.
+// fingerprint table: 8-byte (length, crc32) per preprocessed TU.
+static Xdb *g_fingerprint_xdb = NULL;
+
+// source archive (only when XGILL_KEEP_SOURCE=1).
 static Xdb *g_source_xdb = NULL;
 static Xdb *g_preproc_xdb = NULL;
 
@@ -140,16 +145,18 @@ void LoadDatabases()
   if (have_load) return;
   have_load = true;
 
-  g_body_xdb = GetDatabase(BODY_DATABASE, true);
-  g_init_xdb = GetDatabase(INIT_DATABASE, true);
-  g_comp_xdb = GetDatabase(COMP_DATABASE, true);
+  g_body_xdb = GetDatabase(BODY_DATABASE, CreateMode::Create);
+  g_init_xdb = GetDatabase(INIT_DATABASE, CreateMode::Create);
+  g_comp_xdb = GetDatabase(COMP_DATABASE, CreateMode::Create);
 
-  g_source_xdb = GetDatabase(SOURCE_DATABASE, true);
-  g_preproc_xdb = GetDatabase(PREPROC_DATABASE, true);
+  g_fingerprint_xdb = GetDatabase(FINGERPRINT_DATABASE, CreateMode::Create);
 
-  g_annot_body_xdb = GetDatabase(BODY_ANNOT_DATABASE, false);
-  g_annot_init_xdb = GetDatabase(INIT_ANNOT_DATABASE, false);
-  g_annot_comp_xdb = GetDatabase(COMP_ANNOT_DATABASE, false);
+  g_source_xdb  = GetDatabase(SOURCE_DATABASE,  CreateMode::Create);
+  g_preproc_xdb = GetDatabase(PREPROC_DATABASE, CreateMode::Create);
+
+  g_annot_body_xdb = GetDatabase(BODY_ANNOT_DATABASE, CreateMode::DontCreate);
+  g_annot_init_xdb = GetDatabase(INIT_ANNOT_DATABASE, CreateMode::DontCreate);
+  g_annot_comp_xdb = GetDatabase(COMP_ANNOT_DATABASE, CreateMode::DontCreate);
 
   // we are doing an incremental analysis if there is an existing worklist.
   if (access(WORKLIST_FILE, F_OK) == 0)
@@ -916,36 +923,60 @@ bool BlockWriteFile(Transaction *t, const Vector<TOperand*> &arguments,
 
   String *file = String::Make((const char*) file_name);
 
+  // Compute the 8-byte fingerprint: [uint32 length_le][uint32 crc32_le].
+  uint32_t fp_len = (uint32_t) preproc_length;
+  uint32_t fp_crc = (uint32_t) crc32(0, preproc_data, preproc_length);
+  uint8_t fp_bytes[8];
+  memcpy(fp_bytes,     &fp_len, 4);
+  memcpy(fp_bytes + 4, &fp_crc, 4);
+
   if (g_incremental) {
-    // compare the preprocessed contents with the old data to look for changes.
     bool preproc_new = false;
 
-    static Buffer compare_buf;
-    if (XdbFindUncompressed(g_preproc_xdb, file, &compare_buf)) {
-      if (compare_buf.pos - compare_buf.base != (int) preproc_length)
-        preproc_new = true;
-      else if (memcmp(compare_buf.base, preproc_data, preproc_length) != 0)
-        preproc_new = true;
-      compare_buf.Reset();
-    }
-    else {
-      // entirely new file.
-      preproc_new = true;
+    static Buffer fp_buf;
+    Buffer fp_key((const uint8_t*) file->Value(), strlen(file->Value()) + 1);
+    if (g_fingerprint_xdb->Find(&fp_key, &fp_buf)) {
+      if (fp_buf.pos - fp_buf.base == 8) {
+        uint32_t old_len, old_crc;
+        memcpy(&old_len, fp_buf.base,     4);
+        memcpy(&old_crc, fp_buf.base + 4, 4);
+        if (old_len != fp_len || old_crc != fp_crc)
+          preproc_new = true;
+      } else {
+        preproc_new = true;  // malformed entry; treat as changed
+      }
+      fp_buf.Reset();
+    } else {
+      preproc_new = true;  // entirely new file
     }
 
     if (preproc_new && !g_file_changed.Contains(file))
       g_file_changed.PushBack(file);
   }
 
-  static Buffer scratch_buf;
+  // Always write the fingerprint to the main file.
+  {
+    Buffer key_buf((const uint8_t*) file->Value(), strlen(file->Value()) + 1);
+    Buffer val_buf(fp_bytes, 8);
+    g_fingerprint_xdb->Replace(&key_buf, &val_buf);
+  }
 
-  scratch_buf.Append(source_data, source_length);
-  XdbReplaceCompress(g_source_xdb, file, &scratch_buf);
-  scratch_buf.Reset();
+  // Write full source and preprocessed text to the source archive.
+  {
+    static Buffer scratch_buf;
 
-  scratch_buf.Append(preproc_data, preproc_length);
-  XdbReplaceCompress(g_preproc_xdb, file, &scratch_buf);
-  scratch_buf.Reset();
+    if (g_source_xdb) {
+      scratch_buf.Append(source_data, source_length);
+      XdbReplaceCompress(g_source_xdb, file, &scratch_buf);
+      scratch_buf.Reset();
+    }
+
+    if (g_preproc_xdb) {
+      scratch_buf.Append(preproc_data, preproc_length);
+      XdbReplaceCompress(g_preproc_xdb, file, &scratch_buf);
+      scratch_buf.Reset();
+    }
+  }
 
   return true;
 }

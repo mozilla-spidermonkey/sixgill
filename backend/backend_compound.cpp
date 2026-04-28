@@ -113,27 +113,6 @@ TAction* HashRunIfEmpty(Transaction *t,
   return sequence;
 }
 
-// XdbClearIfNotHash ($dbname, $hashname)
-//  $var = HashExists($hashname)
-//  if $var
-//    XdbClear($dbname)
-
-TAction* XdbClearIfNotHash(Transaction *t,
-                           const char *dbname,
-                           const char *hashname)
-{
-  size_t existvar = t->MakeVariable();
-  TOperand *existarg = new TOperandVariable(t, existvar);
-
-  TActionTest *nexist_test = new TActionTest(t, existarg, false);
-  nexist_test->PushAction(XdbClear(t, dbname));
-
-  TActionSequence *sequence = new TActionSequence(t);
-  sequence->PushAction(HashExists(t, hashname, existvar));
-  sequence->PushAction(nexist_test);
-
-  return sequence;
-}
 
 NAMESPACE_END(Compound)
 NAMESPACE_END(Backend)
@@ -152,7 +131,7 @@ bool DoLookupTransaction(const char *db_name,
   if (TransactionBackend::HasFinishedBackends()) {
     Assert(!IsAnalysisRemote());
 
-    Xdb *xdb = GetDatabase(db_name, false);
+    Xdb *xdb = GetDatabase(db_name, CreateMode::DontCreate);
     if (!xdb || !xdb->Exists())
       return false;
 

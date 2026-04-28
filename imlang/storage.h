@@ -26,23 +26,24 @@
 
 NAMESPACE_XGILL_BEGIN
 
-// database name containing function/initializer CFGs.
-#define BODY_DATABASE "src_body.xdb"
-#define INIT_DATABASE "src_init.xdb"
+// Consolidated database files.
+#define XDB_FILE        "xdb.sqlite"
+#define XDB_SOURCE_FILE "xdb-source.sqlite"
 
-// database name containing CSU type definitions.
-#define COMP_DATABASE "src_comp.xdb"
+// Table names within XDB_FILE.
+#define BODY_DATABASE        "body"
+#define INIT_DATABASE        "init"
+#define COMP_DATABASE        "comp"
+#define BODY_ANNOT_DATABASE  "body_annot"
+#define INIT_ANNOT_DATABASE  "init_annot"
+#define COMP_ANNOT_DATABASE  "comp_annot"
+// 8-byte length+CRC32 fingerprint of each preprocessed translation unit,
+// used for incremental change detection.
+#define FINGERPRINT_DATABASE "fingerprint"
 
-// database name containing function/initializer/type annotation CFGs.
-#define BODY_ANNOT_DATABASE "annot_body.xdb"
-#define INIT_ANNOT_DATABASE "annot_init.xdb"
-#define COMP_ANNOT_DATABASE "annot_comp.xdb"
-
-// database to receive contents of files.
-#define SOURCE_DATABASE "file_source.xdb"
-
-// database to receive contents of preprocessed files.
-#define PREPROC_DATABASE "file_preprocess.xdb"
+// Table names within XDB_SOURCE_FILE (created only when XGILL_KEEP_SOURCE=1).
+#define SOURCE_DATABASE  "source"
+#define PREPROC_DATABASE "preproc"
 
 // hash names for worklists.
 #define WORKLIST_FUNC_HASH "worklist_func_hash"

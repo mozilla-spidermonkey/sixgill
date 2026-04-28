@@ -27,6 +27,7 @@
 #include "operand.h"
 #include "action.h"
 #include "backend.h"
+#include "backend_xdb.h"
 #include "serial.h"
 #include <util/config.h>
 
@@ -565,6 +566,7 @@ void SubmitTransaction(Transaction *t)
   }
   else {
     t->Execute();
+    FlushDatabases();
   }
 
   Assert(t->HasSuccess());

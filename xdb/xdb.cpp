@@ -17,1060 +17,475 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "xdb.h"
-
-#include <errno.h>
-#include <fcntl.h>
-#include <unistd.h>
+#include <stdio.h>
 #include <string.h>
-#define __STDC_FORMAT_MACROS
-#include <inttypes.h>
-
-// filesystem differences for OSX, which supports large files without
-// special handling or functions.
-#ifdef HOST_DARWIN
-#define O_LARGEFILE 0
-#define lseek64 lseek
-#define ftruncate64 ftruncate
-typedef off_t off64_t;
-#endif
-
-#define ftruncate64 ftruncate
+#include <unistd.h>
 
 NAMESPACE_XGILL_BEGIN
 
 /////////////////////////////////////////////////////////////////////
-// Xdb static
+// XdbFile
 /////////////////////////////////////////////////////////////////////
 
-static bool g_key_cache_enabled = true;
-
-void Xdb::DisableKeyCache()
+void XdbFile::set_error(int rc, const char *context)
 {
-  g_key_cache_enabled = false;
+  m_error = true;
+  fprintf(logfile, "ERROR: XdbFile %s %s: %s\n", m_path, context,
+          m_db ? sqlite3_errmsg(m_db) : sqlite3_errstr(rc));
 }
 
-#define DEFAULT_HASH_SIZE  4096
-#define DEFAULT_KEY_SIZE   8192
+void XdbFile::setup_pragmas()
+{
+  // Values are tuned a bit to reduce overhead compared to previous XDB file format.
+  sqlite3_exec(m_db, "PRAGMA page_size=65536",    NULL, NULL, NULL);
 
-#define set_error()       Assert(false)
-#define report_corrupt()  do { m_has_error = true; } while (0)
+  // WAL mode (Write-Ahead Log) for fast writes with fsync only at transaction
+  // commit.
+  sqlite3_exec(m_db, "PRAGMA journal_mode=WAL",   NULL, NULL, NULL);
+  sqlite3_exec(m_db, "PRAGMA synchronous=NORMAL", NULL, NULL, NULL);
 
-/////////////////////////////////////////////////////////////////////
-// Xdb::StreamInfo
-/////////////////////////////////////////////////////////////////////
+  sqlite3_exec(m_db, "PRAGMA temp_store=MEMORY", NULL, NULL, NULL);
 
-Xdb::StreamInfo::StreamInfo()
-  : stream(0), hash_entry(), key_entry(), key_dirty(false)
-{}
+  // Negative values mean the units are KiB instead of #pages. Ugh.
+  sqlite3_exec(m_db, "PRAGMA cache_size=-65536", NULL, NULL, NULL);
+
+  // It's easy to construct a situation with lots of concurrent accesses, and
+  // this will make them wait their turn rather than having a thundering herd
+  // where the later ones fail outright.
+  sqlite3_exec(m_db, "PRAGMA busy_timeout=60000", NULL, NULL, NULL);
+}
+
+void XdbFile::finalize_file()
+{
+  // Called once on close of a writable connection (i.e. at end of build, when
+  // the manager signals shutdown via `xsource -end-manager`). Fold the WAL back
+  // into the main database file and switch to a rollback journal so the
+  // resulting single .sqlite file is self-contained -- no -wal/-shm side files
+  // to lose track of when the artifact is copied around, and ready to be
+  // treated as read-only. Safe here because this is the sole connection and all
+  // prepared statements/transactions have already been finalized/committed.
+  if (!m_db || m_read_only || m_error) return;
+
+  // Truncate rather than the default PASSIVE checkpoint so the -wal file is
+  // emptied, not just replayed into the db.
+  sqlite3_exec(m_db, "PRAGMA wal_checkpoint(TRUNCATE)", NULL, NULL, NULL);
+
+  // Switching out of WAL performs a final checkpoint and removes -wal/-shm.
+  int rc = sqlite3_exec(m_db, "PRAGMA journal_mode=DELETE", NULL, NULL, NULL);
+  if (rc != SQLITE_OK) {
+    fprintf(logfile, "WARNING: XdbFile %s could not switch to DELETE journal "
+            "mode: %s\n", m_path, sqlite3_errmsg(m_db));
+    }
+}
+
+void XdbFile::open_db(bool create)
+{
+  int flags = m_read_only ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE;
+  if (create) {
+    flags |= SQLITE_OPEN_CREATE;
+  }
+
+  int rc = sqlite3_open_v2(m_path, &m_db, flags, NULL);
+  if (rc != SQLITE_OK) {
+    if (rc == SQLITE_CANTOPEN && !create) {
+      // File does not yet exist, which is ok.
+    } else {
+      set_error(rc, "open");
+    }
+    if (m_db) {
+      sqlite3_close(m_db);
+      m_db = NULL;
+    }
+  }
+}
+
+void XdbFile::begin_tx()
+{
+  if (m_in_tx) return;
+  int rc = sqlite3_exec(m_db, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+  if (rc != SQLITE_OK) {
+    set_error(rc, "BEGIN IMMEDIATE");
+  } else {
+    m_in_tx = true;
+  }
+}
+
+XdbFile::XdbFile(const char *path, uint32_t flags)
+  : m_db(NULL), m_read_only(!!(flags & kReadOnly)),
+    m_error(false), m_in_tx(false), m_table_count(0)
+{
+  m_path = new char[strlen(path) + 1];
+  strcpy(m_path, path);
+  memset(m_tables, 0, sizeof(m_tables));
+
+  open_db(!!(flags & kCreate));
+  if (Exists()) {
+    setup_pragmas();
+  }
+}
+
+XdbFile::~XdbFile()
+{
+  if (m_db) {
+    Flush();
+    for (int i = 0; i < m_table_count; i++) {
+      delete m_tables[i];
+    }
+    // Statements are now finalized and any write tx committed, so the
+    // connection is idle: fold the WAL in and produce a self-contained file.
+    finalize_file();
+    sqlite3_close(m_db);
+    m_db = NULL;
+  }
+  delete[] m_path;
+}
+
+void XdbFile::Create()
+{
+  if (m_db) return;
+  open_db(true);
+  if (Exists()) {
+    setup_pragmas();
+  }
+  // DDL for individual tables runs via Xdb::Create(); stmts are prepared
+  // lazily on first use.
+}
+
+void XdbFile::Flush()
+{
+  if (!m_db || m_read_only || !m_in_tx) return;
+  int rc = sqlite3_exec(m_db, "COMMIT", NULL, NULL, NULL);
+  if (rc != SQLITE_OK) {
+    set_error(rc, "COMMIT");
+  }
+  m_in_tx = false;
+}
+
+void XdbFile::Recover()
+{
+  // Tables in use before must be recreated in the new file so that
+  // previously handed-out Xdb handles remain usable. A table with prepared
+  // statements is known to exist, since preparing fails on a missing table.
+  bool existed[kMaxTables] = {};
+  if (m_db) {
+    if (m_in_tx) {
+      sqlite3_exec(m_db, "ROLLBACK", NULL, NULL, NULL);
+    }
+    for (int i = 0; i < m_table_count; i++) {
+      if (m_tables[i]) {
+        existed[i] = m_tables[i]->m_stmt_find != NULL;
+        m_tables[i]->finalize_stmts();
+      }
+    }
+    sqlite3_close(m_db);
+    m_db = NULL;
+  }
+  m_error  = false;
+  m_in_tx  = false;
+  unlink(m_path);
+  Create();
+  for (int i = 0; i < m_table_count; i++) {
+    if (existed[i]) {
+      m_tables[i]->Create();
+    }
+  }
+}
+
+Xdb *XdbFile::Table(const char *table_name)
+{
+  for (int i = 0; i < m_table_count; i++) {
+    if (strcmp(m_tables[i]->GetTableName(), table_name) == 0) {
+      return m_tables[i];
+    }
+  }
+
+  Assert(m_table_count < kMaxTables);
+  Xdb *xdb = new Xdb(this, table_name);
+  // Statements are prepared lazily (on first use) or by Xdb::Create().
+  m_tables[m_table_count] = xdb;
+  m_table_count++;
+  return xdb;
+}
 
 /////////////////////////////////////////////////////////////////////
 // Xdb
 /////////////////////////////////////////////////////////////////////
 
-Xdb::Xdb(const char *file, bool do_create, bool do_truncate, bool read_only)
-  : m_file(NULL), m_fd(-1), m_read_only(read_only), m_has_error(false),
-    m_header(), m_header_dirty(false),
-    m_keys_dirty(false), m_hash_dirty(false), m_hash_dirty_stream(0),
-    m_key_cache_enabled(g_key_cache_enabled)
+Xdb::Xdb(XdbFile *file, const char *table)
+  : m_file(file), m_table(NULL),
+    m_sql_schema(NULL), m_sql_find(NULL), m_sql_has(NULL),
+    m_sql_add(NULL), m_sql_replace(NULL), m_sql_keys(NULL), m_sql_stats(NULL),
+    m_stmt_find(NULL), m_stmt_has(NULL), m_stmt_add(NULL), m_stmt_replace(NULL)
 {
-  // check for proper suffix.
-  if (strlen(file) < 4 || memcmp(file + strlen(file) - 4, ".xdb", 4) != 0)
-    printf("WARNING: bad file suffix: expected .xdb, got %s\n", file);
-
-  // make a copy of the filename.
-  m_file = new char[strlen(file) + 1];
-  strcpy(m_file, file);
-
-  int flags;
-  if (m_read_only)
-    flags = O_RDONLY | O_LARGEFILE;
-  else
-    flags = O_RDWR | O_LARGEFILE;
-
-  // open the specified file.
-  m_fd = open(m_file, flags, 0666);
-
-  if (m_fd == -1) {
-    if (errno == ENOENT) {
-      // file does not exist. create it if we're supposed to.
-      if (do_create)
-        Create();
-    }
-    else {
-      // encountered an error while opening.
-      printf("ERROR: open() failure: %s\n", strerror(errno));
-      set_error();
-    }
-  }
-  else if (do_truncate) {
-    // file exists and we are going to truncate and recreate it.
-    Truncate();
-  }
-  else {
-    // file exists and we are going to open it.
-    InitStreamHash();
-
-    Buffer header_data(XDB_HEADER_MIN_SIZE);
-
-    // seek to file beginning and read in the header data.
-    do_seek(0);
-    do_read(header_data.base, XDB_HEADER_MIN_SIZE);
-
-    m_header.Read(&header_data);
-    if (!IsValidFileHeader(m_header)) {
-      report_corrupt();
-      return;
-    }
-
-    // read in the hash stream from disk and store in stream_hash.
-    ReadHashStream();
-
-    if (m_key_cache_enabled) {
-      // read in the key stream from disk and store it in stream_hash.
-      ReadKeyStream();
-    }
-  }
+  m_table = strdup(table);
+  build_sql();
 }
 
 Xdb::~Xdb()
 {
-  if (m_fd != -1) {
-
-    // flush the database only if we didn't encounter some error while
-    // processing the database.
-    if (!m_has_error)
-      Flush();
-
-    int ret = close(m_fd);
-    if (ret != 0)
-      printf("ERROR: close() failure: %s\n", strerror(errno));
-
-    InitStreamHash();
-  }
-
-  if (m_file != NULL)
-    delete[] m_file;
+  finalize_stmts();
+  free(m_table);
+  free(m_sql_schema);
+  free(m_sql_find);
+  free(m_sql_has);
+  free(m_sql_add);
+  free(m_sql_replace);
+  free(m_sql_keys);
+  free(m_sql_stats);
 }
 
-void Xdb::PrintStats()
+void Xdb::build_sql()
 {
-  Assert(m_fd != -1 && !m_has_error);
-
-  fprintf(logfile, "Xdb statistics:\n");
-  fprintf(logfile, "File size: %" PRIu64 "\n", (uint64_t) m_header.file_size);
-  fprintf(logfile, "Data streams: %" PRIu64 "\n", (uint64_t) m_header.data_stream_count);
-
-  if (m_key_cache_enabled) {
-    uint64_t allocated = XDB_HEADER_MIN_SIZE;
-    uint64_t used = XDB_HEADER_MIN_SIZE;
-
-    for (uint32_t stream = 1; stream <= MaxDataStream(); stream++) {
-      XdbFile::StreamLayout layout = GetStreamLayout(stream);
-
-      allocated += layout.size;
-      used += layout.length;
-    }
-
-    fprintf(logfile, "Bytes allocated: %" PRIu64 " (%.2f)\n", allocated,
-	    allocated / (float)m_header.file_size);
-    fprintf(logfile, "Bytes used: %" PRIu64 " (%.2f)\n", used,
-	    used / (float)m_header.file_size);
+  bool ok = true;
+  ok = ok && asprintf(&m_sql_schema,
+    "CREATE TABLE IF NOT EXISTS %s"
+    " (name TEXT PRIMARY KEY, data BLOB NOT NULL) STRICT, WITHOUT ROWID",
+    m_table) >= 0;
+  ok = ok && asprintf(&m_sql_find,
+    "SELECT data FROM %s WHERE name=?", m_table) >= 0;
+  ok = ok && asprintf(&m_sql_has,
+    "SELECT 1 FROM %s WHERE name=? LIMIT 1", m_table) >= 0;
+  ok = ok && asprintf(&m_sql_add,
+    "INSERT OR IGNORE INTO %s(name,data) VALUES(?,?)", m_table) >= 0;
+  ok = ok && asprintf(&m_sql_replace,
+    "INSERT INTO %s(name,data) VALUES(?,?)"
+    " ON CONFLICT(name) DO UPDATE SET data=excluded.data",
+    m_table) >= 0;
+  ok = ok && asprintf(&m_sql_keys,
+    "SELECT name FROM %s ORDER BY name", m_table) >= 0;
+  ok = ok && asprintf(&m_sql_stats,
+    "SELECT count(*), coalesce(sum(length(data)),0),"
+    " (SELECT page_count*page_size FROM pragma_page_count(), pragma_page_size())"
+    " FROM %s",
+    m_table) >= 0;
+  if (!ok) {
+    m_file->m_error = true;
   }
 }
 
-void Xdb::Flush()
+void Xdb::set_error(int rc, const char *context)
 {
-  Assert(m_fd != -1 && !m_has_error);
-
-  if (m_read_only)
-    return;
-
-  if (m_header_dirty) {
-    // write the header to disk.
-
-    size_t header_size = m_header.header_size;
-    Buffer header_data(header_size);
-    m_header.Write(&header_data);
-
-    // write out the entire header
-    do_seek(0);
-    do_write(header_data.base, header_size);
-
-    // clear dirty bit
-    m_header_dirty = false;
-  }
-
-  if (m_hash_dirty) {
-    // write all dirty hash stream entries to disk.
-    // we can do this as one big write.
-
-    uint32_t dirty_count = MaxDataStream() - m_hash_dirty_stream + 1;
-    uint32_t dirty_length = dirty_count * XDB_HASH_STREAM_ENTRY_SIZE;
-
-    Buffer hash_buf(dirty_length);
-    for (uint32_t stream = m_hash_dirty_stream;
-         stream <= MaxDataStream();
-         stream++) {
-      StreamInfo *info = GetDataStream(stream);
-      info->hash_entry.Write(&hash_buf);
-    }
-
-    uint32_t hash_offset =
-      (m_hash_dirty_stream - XDB_DATA_STREAM_BEGIN)
-      * XDB_HASH_STREAM_ENTRY_SIZE;
-
-    Assert(hash_offset + dirty_length == m_header.hash_stream.length);
-
-    // seek and write out all the dirty hash entries
-    do_seek(m_header.hash_stream.offset + hash_offset);
-    do_write(hash_buf.base, dirty_length);
-
-    // clear dirty bits
-    m_hash_dirty = false;
-    m_hash_dirty_stream = 0;
-  }
-
-  if (m_keys_dirty) {
-    // find all dirty keys. we have to scan the entire database.
-    // do it in order so that if dirty keys are clustered around one
-    // another (e.g. we mostly did new entry inserts), the writes will
-    // also be clustered.
-
-    for (uint32_t stream = MinDataStream();
-         stream <= MaxDataStream();
-         stream++) {
-      StreamInfo *info = GetDataStream(stream);
-      if (info->key_dirty) {
-        // write the key to disk
-
-        uint32_t dirty_length =
-          XDB_KEY_STREAM_ENTRY_SIZE(info->key_entry.key_length);
-        Buffer key_buf(dirty_length);
-        info->key_entry.Write(&key_buf);
-
-        uint32_t key_offset = info->hash_entry.key_offset;
-        Assert(key_offset + dirty_length <= m_header.key_stream.length);
-
-        // seek and write out the key entry
-        do_seek(m_header.key_stream.offset + key_offset);
-        do_write(key_buf.base, dirty_length);
-
-        // clear dirty bit
-        info->key_dirty = false;
-      }
-    }
-
-    // clear overall dirty bit
-    m_keys_dirty = false;
-  }
+  m_file->set_error(rc, context);
 }
 
-bool Xdb::Exists()
+void Xdb::bind_key(sqlite3_stmt *stmt, int idx, const Buffer *key)
 {
-  Assert(!m_has_error);
-  return m_fd != -1;
+  sqlite3_bind_text(stmt, idx, (const char*)key->base, -1, SQLITE_STATIC);
+}
+
+void Xdb::bind_val(sqlite3_stmt *stmt, int idx, const Buffer *val)
+{
+  sqlite3_bind_blob(stmt, idx, val->base, (int)val->size, SQLITE_STATIC);
+}
+
+void Xdb::prepare_stmts()
+{
+  sqlite3 *db = m_file->m_db;
+  auto prep = [&](const char *sql, sqlite3_stmt **out) {
+    int rc = sqlite3_prepare_v2(db, sql, -1, out, NULL);
+    if (rc != SQLITE_OK) {
+      set_error(rc, "prepare");
+    }
+  };
+  prep(m_sql_find,    &m_stmt_find);
+  prep(m_sql_has,     &m_stmt_has);
+  prep(m_sql_add,     &m_stmt_add);
+  prep(m_sql_replace, &m_stmt_replace);
+}
+
+void Xdb::ensure_prepared()
+{
+  if (!m_stmt_find && m_file->Exists())
+    prepare_stmts();
+}
+
+void Xdb::finalize_stmts()
+{
+  sqlite3_finalize(m_stmt_find);
+  m_stmt_find    = NULL;
+  sqlite3_finalize(m_stmt_has);
+  m_stmt_has     = NULL;
+  sqlite3_finalize(m_stmt_add);
+  m_stmt_add     = NULL;
+  sqlite3_finalize(m_stmt_replace);
+  m_stmt_replace = NULL;
+}
+
+bool Xdb::Exists() const
+{
+  // An absent file is normal (nothing has been written yet), but a file
+  // that failed to open or is corrupt must not masquerade as empty.
+  Assert(!m_file->m_error);
+  if (!m_file->m_db) return false;
+  const char *sql =
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1";
+  sqlite3_stmt *stmt = NULL;
+  int rc = sqlite3_prepare_v2(m_file->m_db, sql, -1, &stmt, NULL);
+  if (rc == SQLITE_OK) {
+    sqlite3_bind_text(stmt, 1, m_table, -1, SQLITE_STATIC);
+    rc = sqlite3_step(stmt);
+  }
+  bool found = (rc == SQLITE_ROW);
+  if (rc != SQLITE_ROW && rc != SQLITE_DONE) {
+    m_file->set_error(rc, "Exists");
+  }
+  sqlite3_finalize(stmt);
+  Assert(!m_file->m_error);
+  return found;
 }
 
 void Xdb::Create()
 {
-  Assert(m_fd == -1 && !m_has_error);
-  Assert(!m_read_only);
-
-  m_fd = open(m_file, O_RDWR | O_LARGEFILE | O_CREAT, 0666);
-  if (m_fd == -1) {
-    if (errno != ENOENT) {
-      printf("ERROR: open() failure: %s\n", strerror(errno));
-      set_error();
-    }
+  if (!m_file->m_db) {
+    m_file->Create();
+  }
+  if (!m_file->Exists()) {
     return;
   }
 
-  // fill in the header with default information.
-  InitStreamHash();
+  char *err = NULL;
 
-  // mark the header as dirty and don't write it out.
-  m_header_dirty = true;
-
-  m_header.magic = XDB_MAGIC;
-  m_header.version = XDB_VERSION;
-  m_header.header_size = XDB_HEADER_MIN_SIZE;
-  m_header.file_size =
-    XDB_HEADER_MIN_SIZE + DEFAULT_HASH_SIZE + DEFAULT_KEY_SIZE;
-  m_header.data_stream_count = 0;
-  m_header.hash_method = XDB_HASH_ELF;
-
-  m_header.hash_stream.id = XDB_HASH_STREAM;
-  m_header.hash_stream.offset = XDB_HEADER_MIN_SIZE;
-  m_header.hash_stream.size = DEFAULT_HASH_SIZE;
-  m_header.hash_stream.length = 0;
-  m_header.hash_stream.prev_id = 0;
-  m_header.hash_stream.next_id = XDB_KEY_STREAM;
-
-  m_header.key_stream.id = XDB_KEY_STREAM;
-  m_header.key_stream.offset = XDB_HEADER_MIN_SIZE + DEFAULT_HASH_SIZE;
-  m_header.key_stream.size = DEFAULT_KEY_SIZE;
-  m_header.key_stream.length = 0;
-  m_header.key_stream.prev_id = XDB_HASH_STREAM;
-  m_header.key_stream.next_id = 0;
-
-  m_header.first_id = XDB_HASH_STREAM;
-  m_header.last_id = XDB_KEY_STREAM;
-
-  // resize the file to match the header's file size
-  do_truncate(m_header.file_size);
-
-  Assert(IsValidFileHeader(m_header));
-}
-
-void Xdb::Truncate()
-{
-  Assert(m_fd != -1);
-  Assert(!m_read_only);
-
-  // truncating resets the error bit.
-  m_has_error = false;
-
-  // truncate the file to empty
-  do_truncate(0);
-
-  // reset the stream hash
-  InitStreamHash();
-
-  // clear dirty bits
-  m_header_dirty = false;
-  m_keys_dirty = false;
-  m_hash_dirty = false;
-  m_hash_dirty_stream = 0;
-
-  // close the file
-  int ret = close(m_fd);
-  if (ret != 0) {
-    printf("ERROR: close() failure: %s\n", strerror(errno));
-    set_error();
+  int rc = sqlite3_exec(m_file->m_db, m_sql_schema, NULL, NULL, &err);
+  if (rc != SQLITE_OK) {
+    fprintf(logfile, "ERROR: Xdb %s.%s schema: %s\n",
+            m_file->m_path, m_table, err ? err : sqlite3_errmsg(m_file->m_db));
+    sqlite3_free(err);
+    m_file->m_error = true;
     return;
   }
-  m_fd = -1;
 
-  // recreate the file
-  Create();
-}
-
-bool Xdb::HasKey(Buffer *key)
-{
-  Assert(m_fd != -1 && !m_has_error);
-  Assert(key->base == key->pos);
-
-  XdbFile::StreamLayout layout;
-  return GetKeyLayout(key, NULL, &layout);
-}
-
-uint32_t Xdb::LookupKey(Buffer *key)
-{
-  Assert(m_fd != -1 && !m_has_error);
-  Assert(key->base == key->pos);
-
-  XdbFile::StreamLayout layout;
-  if (!GetKeyLayout(key, NULL, &layout))
-      return 0;
-  return layout.id;
-}
-
-bool Xdb::Find(Buffer *key, Buffer *data)
-{
-  Assert(m_fd != -1 && !m_has_error);
-  Assert(key->base == key->pos);
-  Assert(data->base == data->pos);
-
-  XdbFile::StreamLayout layout;
-
-  bool success = GetKeyLayout(key, NULL, &layout);
-  if (!success)
-    return false;
-
-  data->Ensure(layout.length);
-
-  // seek and read in the data itself
-  do_seek(layout.offset);
-  do_read(data->base, layout.length);
-
-  data->pos += layout.length;
-  return true;
-}
-
-bool Xdb::Add(Buffer *key, Buffer *data)
-{
-  Assert(m_fd != -1 && !m_has_error);
-  Assert(!m_read_only);
-  Assert(key->base == key->pos);
-  Assert(data->base == data->pos);
-
-  XdbFile::StreamLayout layout;
-
-  bool success = GetKeyLayout(key, NULL, &layout);
-  if (success) {
-    // existing entry, don't do anything
-    return false;
+  if (!m_stmt_find) {
+    prepare_stmts();
   }
-  else {
-    if (m_has_error)
-      return false;
+}
 
-    // no existing entry, insert a new one
-    InsertEntry(key, data);
+void Xdb::PrintStats()
+{
+  Assert(m_file->Exists());
+
+  sqlite3_stmt *stmt = NULL;
+  sqlite3_prepare_v2(m_file->m_db, m_sql_stats, -1, &stmt, NULL);
+
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    int64_t rows   = sqlite3_column_int64(stmt, 0);
+    int64_t vbytes = sqlite3_column_int64(stmt, 1);
+    int64_t fsize  = sqlite3_column_int64(stmt, 2);
+    fprintf(logfile, "Xdb statistics:\n");
+    fprintf(logfile, "File: %s\n",         m_file->m_path);
+    fprintf(logfile, "Table: %s\n",        m_table);
+    fprintf(logfile, "Rows: %lld\n",       (long long)rows);
+    fprintf(logfile, "Value bytes: %lld\n",(long long)vbytes);
+    fprintf(logfile, "File size: %lld\n",  (long long)fsize);
+  }
+  sqlite3_finalize(stmt);
+}
+
+bool Xdb::HasKey(const Buffer *key)
+{
+  Assert(m_file->Exists());
+  ensure_prepared();
+  Assert(!m_file->m_error);
+  bind_key(m_stmt_has, 1, key);
+  int rc = sqlite3_step(m_stmt_has);
+  bool found = (rc == SQLITE_ROW);
+  if (rc != SQLITE_ROW && rc != SQLITE_DONE) {
+    set_error(rc, "HasKey");
+  }
+  sqlite3_reset(m_stmt_has);
+  sqlite3_clear_bindings(m_stmt_has);
+  return found;
+}
+
+bool Xdb::Find(const Buffer *key, Buffer *out)
+{
+  Assert(m_file->Exists());
+  ensure_prepared();
+  Assert(!m_file->m_error);
+  bind_key(m_stmt_find, 1, key);
+  int rc = sqlite3_step(m_stmt_find);
+  bool found = false;
+  if (rc == SQLITE_ROW) {
+    int len          = sqlite3_column_bytes(m_stmt_find, 0);
+    const void *blob = sqlite3_column_blob(m_stmt_find, 0);
+    out->Append(blob, len);
+    found = true;
+  } else if (rc != SQLITE_DONE) {
+    set_error(rc, "Find");
+  }
+  sqlite3_reset(m_stmt_find);
+  sqlite3_clear_bindings(m_stmt_find);
+  return found;
+}
+
+bool Xdb::Add(const Buffer *key, const Buffer *val)
+{
+  Assert(m_file->Exists() && !m_file->m_read_only);
+  ensure_prepared();
+  m_file->begin_tx();
+  Assert(!m_file->m_error);
+  bind_key(m_stmt_add, 1, key);
+  bind_val(m_stmt_add, 2, val);
+  int rc = sqlite3_step(m_stmt_add);
+  bool inserted = false;
+  if (rc == SQLITE_DONE) {
+    inserted = sqlite3_changes(m_file->m_db) > 0;
+  } else {
+    set_error(rc, "Add");
+  }
+  sqlite3_reset(m_stmt_add);
+  sqlite3_clear_bindings(m_stmt_add);
+  return inserted;
+}
+
+void Xdb::Replace(const Buffer *key, const Buffer *val)
+{
+  Assert(m_file->Exists() && !m_file->m_read_only);
+  ensure_prepared();
+  m_file->begin_tx();
+  Assert(!m_file->m_error);
+  bind_key(m_stmt_replace, 1, key);
+  bind_val(m_stmt_replace, 2, val);
+  int rc = sqlite3_step(m_stmt_replace);
+  if (rc != SQLITE_DONE) {
+    set_error(rc, "Replace");
+  }
+  sqlite3_reset(m_stmt_replace);
+  sqlite3_clear_bindings(m_stmt_replace);
+}
+
+/////////////////////////////////////////////////////////////////////
+// Xdb::KeyIter
+/////////////////////////////////////////////////////////////////////
+
+Xdb::KeyIter Xdb::Keys()
+{
+  Assert(m_file->Exists());
+  sqlite3_stmt *stmt = NULL;
+  int rc = sqlite3_prepare_v2(m_file->m_db, m_sql_keys, -1, &stmt, NULL);
+  if (rc != SQLITE_OK) {
+    set_error(rc, "Keys");
+    stmt = NULL;
+  }
+  Assert(!m_file->m_error);
+  return KeyIter(stmt);
+}
+
+bool Xdb::KeyIter::Next(Buffer *key)
+{
+  if (!m_stmt) return false;
+  int rc = sqlite3_step(m_stmt);
+  if (rc == SQLITE_ROW) {
+    int len = sqlite3_column_bytes(m_stmt, 0);
+    const char *text = (const char*)sqlite3_column_text(m_stmt, 0);
+    key->Append(text, len + 1);
     return true;
   }
-}
-
-void Xdb::Replace(Buffer *key, Buffer *data)
-{
-  Assert(m_fd != -1 && !m_has_error);
-  Assert(!m_read_only);
-  Assert(key->base == key->pos);
-  Assert(data->base == data->pos);
-
-  uint64_t layout_offset;
-  XdbFile::StreamLayout layout;
-
-  bool success = GetKeyLayout(key, &layout_offset, &layout);
-  if (success) {
-    // existing entry, replace its data
-
-    // update the length and reallocate if necessary
-    UpdateLength(&layout, data->size, false);
-
-    // seek and write out the new data
-    do_seek(layout.offset);
-    do_write(data->base, data->size);
-
-    if (m_key_cache_enabled) {
-      m_keys_dirty = true;
-
-      StreamInfo *info = GetDataStream(layout.id);
-      info->key_dirty = true;
-      info->key_entry.data_stream = layout;
-    }
-    else {
-      Buffer write_buf(XDB_STREAM_LAYOUT_SIZE);
-      layout.Write(&write_buf);
-
-      // write out the updated layout
-      do_seek(layout_offset);
-      do_write(write_buf.base, XDB_STREAM_LAYOUT_SIZE);
-    }
-  }
-  else {
-    if (m_has_error)
-      return;
-
-    // no existing entry, insert a new one
-    InsertEntry(key, data);
-  }
-}
-
-void Xdb::Append(Buffer *key, Buffer *data)
-{
-  Assert(m_fd != -1 && !m_has_error);
-  Assert(!m_read_only);
-  Assert(key->base == key->pos);
-  Assert(data->base == data->pos);
-
-  uint64_t layout_offset;
-  XdbFile::StreamLayout layout;
-
-  bool success = GetKeyLayout(key, &layout_offset, &layout);
-  if (success) {
-    // existing entry, append its data
-
-    // update the length and reallocate if necessary
-    size_t old_length = layout.length;
-    UpdateLength(&layout, old_length + data->size, true);
-
-    // seek and write out the new data
-    do_seek(layout.offset + old_length);
-    do_write(data->base, data->size);
-
-    if (m_key_cache_enabled) {
-      m_keys_dirty = true;
-
-      StreamInfo *info = GetDataStream(layout.id);
-      info->key_dirty = true;
-      info->key_entry.data_stream = layout;
-    }
-    else {
-      Buffer write_buf(XDB_STREAM_LAYOUT_SIZE);
-      layout.Write(&write_buf);
-
-      // write out the updated layout
-      do_seek(layout_offset);
-      do_write(write_buf.base, XDB_STREAM_LAYOUT_SIZE);
-    }
-  }
-  else {
-    if (m_has_error)
-      return;
-
-    // no existing entry, insert a new one
-    InsertEntry(key, data);
-  }
-}
-
-void Xdb::LookupKey(uint32_t stream, Buffer *key)
-{
-  Assert(m_fd != -1 && !m_has_error);
-  Assert(key->base == key->pos);
-
-  StreamInfo *info = GetDataStream(stream);
-  Assert(info != NULL);
-
-  if (m_key_cache_enabled) {
-    key->Append(info->key_entry.key, info->key_entry.key_length);
-  }
-  else {
-    // get the offset into the key stream to use.
-    uint32_t key_offset = info->hash_entry.key_offset;
-
-    XdbFile::KeyStreamEntry key_entry;
-    ReadKeyStreamEntry(key_offset, &key_entry);
-
-    key->Append(key_entry.key, key_entry.key_length);
-    track_delete<uint8_t>(g_alloc_XdbStreamInfoKey, key_entry.key);
-  }
-}
-
-uint32_t Xdb::do_hash(const uint8_t *data, uint32_t size)
-{
-  Assert(m_header.hash_method == XDB_HASH_ELF);
-  return ELFHash(0, data, size);
-}
-
-void Xdb::do_seek(uint64_t offset)
-{
-  off64_t ret_off = lseek64(m_fd, offset, SEEK_SET);
-  if (ret_off != (off64_t) offset) {
-    printf("ERROR: lseek64() failed: %s\n", strerror(errno));
-    set_error();
-  }
-}
-
-void Xdb::do_truncate(uint64_t size)
-{
-  int ret = ftruncate64(m_fd, size);
-  if (ret == -1) {
-    printf("ERROR: ftruncate64() failed: %s\n", strerror(errno));
-    set_error();
-  }
-}
-
-void Xdb::do_write(void *base, size_t length)
-{
-  ssize_t ret_size = write(m_fd, base, length);
-  if (ret_size != (ssize_t) length) {
-    printf("ERROR: write() failed: %s\n", strerror(errno));
-    set_error();
-  }
-}
-
-void Xdb::do_read(void *base, size_t length)
-{
-  ssize_t ret_size = read(m_fd, base, length);
-  if (ret_size != (ssize_t) length) {
-    printf("ERROR: read() failed: %s\n", strerror(errno));
-    set_error();
-  }
-}
-
-void Xdb::InitStreamHash()
-{
-  // clear stream_hash
-  m_stream_hash.Clear();
-
-  // release memory for stream_list entries
-  for (uint32_t stream = 0; stream < m_stream_list.Size(); stream++) {
-    StreamInfo *info = m_stream_list[stream];
-    if (info != NULL) {
-      if (info->key_entry.key != NULL)
-        track_delete<uint8_t>(g_alloc_XdbStreamInfoKey, info->key_entry.key);
-      delete info;
-    }
-  }
-
-  // clear stream_list and pad it back out with NULL for the special streams
-  m_stream_list.Clear();
-  for (uint32_t stream = 0; stream < MinDataStream(); stream++)
-    m_stream_list.PushBack(NULL);
-}
-
-XdbFile::StreamLayout Xdb::GetStreamLayout(uint32_t stream)
-{
-  if (stream == 0 || stream > MaxDataStream())
-    return XdbFile::StreamLayout();
-
-  if (stream == XDB_HASH_STREAM)
-    return m_header.hash_stream;
-  if (stream == XDB_KEY_STREAM)
-    return m_header.key_stream;
-
-  StreamInfo *info = m_stream_list[stream];
-  Assert(info != NULL);
-  return info->key_entry.data_stream;
-}
-
-Xdb::StreamInfo* Xdb::GetDataStream(uint32_t stream)
-{
-  if (stream < MinDataStream() || stream > MaxDataStream())
-    return NULL;
-
-  StreamInfo *info = m_stream_list[stream];
-  Assert(info != NULL && info->stream == stream);
-  return info;
-}
-
-void Xdb::ReadHashStream()
-{
-  size_t hash_length = m_header.hash_stream.length;
-
-  // check for empty database
-  if (hash_length == 0)
-    return;
-
-  Buffer hash_data(hash_length);
-
-  // seek to the hash stream data and read in the hash stream
-  do_seek(m_header.hash_stream.offset);
-  do_read(hash_data.base, hash_length);
-
-  for (uint32_t stream = MinDataStream();
-       stream <= MaxDataStream();
-       stream++) {
-    Assert(m_stream_list.Size() == stream);
-
-    XdbFile::HashStreamEntry hash_entry;
-    hash_entry.Read(&hash_data);
-
-    // make and fill in a new StreamInfo
-    StreamInfo *info = new StreamInfo();
-    info->stream = stream;
-    info->hash_entry = hash_entry; 
-
-    // add the StreamInfo to the stream hash and stream list
-    m_stream_hash.Insert(hash_entry.hash_value, info);
-    m_stream_list.PushBack(info);
-  }
-}
-
-void Xdb::ReadKeyStream()
-{
-  Assert(m_key_cache_enabled);
-  size_t key_length = m_header.key_stream.length;
-
-  // check for empty database
-  if (key_length == 0)
-    return;
-
-  Buffer key_data(key_length);
-
-  // seek to the key stream data and read in the key stream
-  do_seek(m_header.key_stream.offset);
-  do_read(key_data.base, key_length);
-
-  while (key_data.pos - key_data.base != (ssize_t) key_data.size) {
-    uint32_t key_offset = key_data.pos - key_data.base;
-
-    XdbFile::KeyStreamEntry key;
-    key.Read(&key_data);
-
-    if (key.key == NULL) {
-      report_corrupt();
-      return;
-    }
-
-    if (!IsValidStreamLayout(m_header, key.data_stream)) {
-      report_corrupt();
-      track_delete<uint8_t>(g_alloc_XdbStreamInfoKey, key.key);
-      return;
-    }
-
-    StreamInfo *info = GetDataStream(key.data_stream.id);
-    if (info == NULL) {
-      report_corrupt();
-      track_delete<uint8_t>(g_alloc_XdbStreamInfoKey, key.key);
-      return;
-    }
-
-    if (info->hash_entry.key_offset != key_offset ||
-        info->key_entry.data_stream.id != 0) {
-      report_corrupt();
-      track_delete<uint8_t>(g_alloc_XdbStreamInfoKey, key.key);
-      return;
-    }
-
-    info->key_entry = key;
-  }
-
-  // check consistency of the key data wrt no overlapping keys
-  // and correct ordering of key list. we can't do this without the
-  // entire key stream in memory.
-
-  for (uint32_t stream = 1; stream <= MaxDataStream(); stream++) {
-    XdbFile::StreamLayout layout = GetStreamLayout(stream);
-
-    if (layout.prev_id == 0 && layout.next_id == 0) {
-      report_corrupt();
-      return;
-    }
-
-    if (layout.prev_id == 0) {
-      if (m_header.first_id != stream) {
-        report_corrupt();
-        return;
-      }
-    }
-    else {
-      XdbFile::StreamLayout prev_layout = GetStreamLayout(layout.prev_id);
-      if (prev_layout.next_id != stream) {
-        report_corrupt();
-        return;
-      }
-    }
-
-    if (layout.next_id == 0) {
-      if (m_header.last_id != stream) {
-        report_corrupt();
-        return;
-      }
-    }
-    else {
-      XdbFile::StreamLayout next_layout = GetStreamLayout(layout.next_id);
-      if (next_layout.prev_id != stream) {
-        report_corrupt();
-        return;
-      }
-
-      // check the file-order sortedness of the two entries
-      uint64_t next_begin = layout.offset + layout.size;
-      if (next_begin > next_layout.offset) {
-        report_corrupt();
-        return;
-      }
-    }
-  }
-}
-
-void Xdb::ReadKeyStreamEntry(uint32_t key_offset,
-                             XdbFile::KeyStreamEntry *key_entry)
-{
-  // get the absolute offset into the file of the key stream offset
-  uint64_t offset = m_header.key_stream.offset + key_offset;
-
-  size_t try_size = XDB_KEY_STREAM_TRY_SIZE;
-  if (try_size > m_header.key_stream.length - key_offset)
-    try_size = m_header.key_stream.length - key_offset;
-  Buffer key_entry_data(try_size);
-
-  // seek to the key position and read in the key
-  do_seek(offset);
-  do_read(key_entry_data.base, try_size);
-
-  key_entry->Read(&key_entry_data);
-
-  // if we did not get the entire key we need to reread it
-  if (key_entry->key == NULL) {
-    Assert(key_entry->key_length != 0);
-
-    size_t big_size = XDB_KEY_STREAM_ENTRY_SIZE(key_entry->key_length);
-    Buffer key_entry_data_big(big_size);
-    
-    // reseek to the key position and reread the key
-    do_seek(offset);
-    do_read(key_entry_data_big.base, big_size);
-
-    key_entry->Read(&key_entry_data_big);
-    Assert(key_entry->key != NULL);
-  }
-}
-
-bool Xdb::GetKeyLayout(Buffer *key,
-                       uint64_t *layout_offset,
-                       XdbFile::StreamLayout *layout)
-{
-  Assert(m_fd != -1);
-  Assert(key->base == key->pos);
-
-  uint32_t hash = do_hash(key->base, key->size);
-
-  Vector<StreamInfo*> *entries = m_stream_hash.Lookup(hash);
-  if (entries != NULL) {
-    for (size_t eind = 0; eind < entries->Size(); eind++) {
-      StreamInfo *info = entries->At(eind);
-
-      // get the offset into the key stream of the info for this stream.
-      uint32_t key_offset = info->hash_entry.key_offset;
-
-      XdbFile::KeyStreamEntry key_entry = info->key_entry;
-      bool free_key_entry = false;
-
-      if (!m_key_cache_enabled) {
-        // have to read in the key entry from disk
-        free_key_entry = true;
-        ReadKeyStreamEntry(key_offset, &key_entry);
-      }
-
-      // check for (unlikely) mismatch with specified key
-      if (key_entry.key_length != key->size ||
-          memcmp(key_entry.key, key->base, key->size) != 0) {
-        if (free_key_entry)
-          track_delete<uint8_t>(g_alloc_XdbStreamInfoKey, key_entry.key);
-        continue;
-      }
-
-      if (free_key_entry)
-        track_delete<uint8_t>(g_alloc_XdbStreamInfoKey, key_entry.key);
-
-      // success!
-
-      if (layout_offset) {
-        // compute the absolute file offset of the key stream layout
-        *layout_offset =
-          m_header.key_stream.offset + key_offset
-          + XDB_KEY_STREAM_LAYOUT_OFFSET;
-      }
-
-      *layout = key_entry.data_stream;
-      return true;
-    }
-  }
-
   return false;
 }
 
-void Xdb::ChangeStreamLink(uint32_t source_id, uint32_t target_id,
-                           bool update_next)
+Xdb::KeyIter::~KeyIter()
 {
-  if (source_id == 0) {
-    // update the first or last ID in the hash to target_id
-    m_header_dirty = true;
-    if (update_next)
-      m_header.first_id = target_id;
-    else
-      m_header.last_id = target_id;
-  }
-  else if (source_id == XDB_HASH_STREAM) {
-    // update the hash stream to point to target_id
-    m_header_dirty = true;
-    if (update_next)
-      m_header.hash_stream.next_id = target_id;
-    else
-      m_header.hash_stream.prev_id = target_id;
-  }
-  else if (source_id == XDB_KEY_STREAM) {
-    // update the key stream to point to target_id
-    m_header_dirty = true;
-    if (update_next)
-      m_header.key_stream.next_id = target_id;
-    else
-      m_header.key_stream.prev_id = target_id;
-  }
-  else if (m_key_cache_enabled) {
-    m_keys_dirty = true;
-
-    StreamInfo *info = GetDataStream(source_id);
-    info->key_dirty = true;
-
-    if (update_next)
-      info->key_entry.data_stream.next_id = target_id;
-    else
-      info->key_entry.data_stream.prev_id = target_id;
-  }
-  else {
-    // seek out and overwrite the key layout in the source file
-    XdbFile::StreamLayout layout;
-
-    // get the offset into the key stream to use.
-    StreamInfo *info = GetDataStream(source_id);
-    uint32_t key_offset = info->hash_entry.key_offset;
-
-    Assert(key_offset + XDB_STREAM_LAYOUT_SIZE
-           <= m_header.key_stream.length);
-
-    Buffer layout_data(XDB_STREAM_LAYOUT_SIZE);
-
-    // get the absolute offset into the file of the key layout
-    uint64_t offset =
-      m_header.key_stream.offset + key_offset +
-      XDB_KEY_STREAM_LAYOUT_OFFSET;
-
-    // seek to the key position and read in the key layout
-    do_seek(offset);
-    do_read(layout_data.base, XDB_STREAM_LAYOUT_SIZE);
-
-    layout.Read(&layout_data);
-
-    if (update_next)
-      layout.next_id = target_id;
-    else
-      layout.prev_id = target_id;
-
-    layout_data.Reset();
-    layout.Write(&layout_data);
-
-    // reseek and write out the updated key layout
-    do_seek(offset);
-    do_write(layout_data.base, XDB_STREAM_LAYOUT_SIZE);
-  }
-}
-
-void Xdb::StreamLinkAppend(XdbFile::StreamLayout *layout)
-{
-  Assert(layout->prev_id == 0);
-  Assert(layout->next_id == 0);
-  Assert(m_header.last_id != layout->id);
-
-  layout->prev_id = m_header.last_id;
-
-  m_header_dirty = true;
-  m_header.last_id = layout->id;
-
-  ChangeStreamLink(layout->prev_id, layout->id, true);
-}
-
-void Xdb::UpdateLength(XdbFile::StreamLayout *layout,
-                       uint32_t new_length, bool do_copy)
-{
-  // update the length in the key stream entry
-  uint32_t old_length = layout->length;
-  layout->length = new_length;
-
-  if (new_length > layout->size) {
-    // we need to allocate new space for the layout.
-
-    uint64_t new_offset = m_header.file_size;
-    uint32_t new_size = new_length * 2;
-    if (new_size < REALLOCATE_MIN_SIZE)
-      new_size = REALLOCATE_MIN_SIZE;
-
-    m_header_dirty = true;
-    m_header.file_size += new_size;
-
-    // resize the file to its new length
-    do_truncate(m_header.file_size);
-
-    // copy the old data over if needed
-    if (do_copy) {
-      Buffer old_data(old_length);
-
-      // read in the old data
-      do_seek(layout->offset);
-      do_read(old_data.base, old_length);
-
-      // copy to the new position at the end of file
-      do_seek(new_offset);
-      do_write(old_data.base, old_length);
-    }
-
-    // update the key entry with new offset and size
-    layout->offset = new_offset;
-    layout->size = new_size;
-
-    // fixup the linked list entries in the key stream
-
-    // first remove the stream from the list
-    ChangeStreamLink(layout->prev_id, layout->next_id, true);
-    ChangeStreamLink(layout->next_id, layout->prev_id, false);
-
-    // append the stream to the end of the list
-    layout->prev_id = 0;
-    layout->next_id = 0;
-    StreamLinkAppend(layout);
-  }
-}
-
-void Xdb::InsertEntry(Buffer *key, Buffer *data)
-{
-  Assert(m_fd != -1 && !m_has_error);
-  Assert(key->base == key->pos);
-  Assert(data->base == data->pos);
-
-  m_header_dirty = true;
-
-  // allocate a new stream identifier
-  uint32_t new_stream = XDB_DATA_STREAM_BEGIN + m_header.data_stream_count;
-  m_header.data_stream_count++;
-
-  // update the length of the hash stream
-  uint32_t old_hash_length = m_header.hash_stream.length;
-  uint32_t new_hash_length = old_hash_length + XDB_HASH_STREAM_ENTRY_SIZE;
-  UpdateLength(&m_header.hash_stream, new_hash_length, true);
-
-  // update the length of the key stream
-  uint32_t old_key_length = m_header.key_stream.length;
-  uint32_t new_key_length =
-    old_key_length + XDB_KEY_STREAM_ENTRY_SIZE(key->size);
-  UpdateLength(&m_header.key_stream, new_key_length, true);
-
-  // update the length of the file itself
-  uint64_t old_file_size = m_header.file_size;
-  m_header.file_size += data->size;
-  do_truncate(m_header.file_size);
-
-  // compute the key's hash value
-  uint32_t hash = do_hash(key->base, key->size);
-
-  Assert(m_stream_list.Size() == new_stream);
-
-  // make and fill in a new StreamInfo for the entry
-  StreamInfo *info = new StreamInfo();
-  info->stream = new_stream;
-  info->hash_entry.hash_value = hash;
-  info->hash_entry.key_offset = old_key_length;
-
-  // add the StreamInfo to the stream hash and stream list
-  m_stream_hash.Insert(hash, info);
-  m_stream_list.PushBack(info);
-
-  // mark the hash as dirty if necessary
-  if (!m_hash_dirty) {
-    m_hash_dirty = true;
-    m_hash_dirty_stream = new_stream;
-  }
-
-  // construct the key stream entry for the new stream
-  XdbFile::KeyStreamEntry key_entry;
-  key_entry.key = key->base;
-  key_entry.key_length = key->size;
-  key_entry.data_stream.id = new_stream;
-  key_entry.data_stream.offset = old_file_size;
-  key_entry.data_stream.size = data->size;
-  key_entry.data_stream.length = data->size;
-  key_entry.data_stream.prev_id = 0;
-  key_entry.data_stream.next_id = 0;
-
-  // append the key stream to the file order list
-  StreamLinkAppend(&key_entry.data_stream);
-
-  if (m_key_cache_enabled) {
-    m_keys_dirty = true;
-    info->key_dirty = true;
-
-    // reallocate the key data we are storing
-    key_entry.key = track_new<uint8_t>(g_alloc_XdbStreamInfoKey, key->size);
-    memcpy(key_entry.key, key->base, key->size);
-
-    // copy over the key entry
-    info->key_entry = key_entry;
-  }
-  else {
-    uint32_t write_length = XDB_KEY_STREAM_ENTRY_SIZE(key->size);
-    Buffer key_write_buf(write_length);
-    key_entry.Write(&key_write_buf);
-
-    // write out the new key stream entry
-    do_seek(m_header.key_stream.offset + old_key_length);
-    do_write(key_write_buf.base, write_length);
-  }
-
-  // write out the data stream itself
-  do_seek(old_file_size);
-  do_write(data->base, data->size);
+  sqlite3_finalize(m_stmt);
 }
 
 NAMESPACE_XGILL_END
