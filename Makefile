@@ -19,6 +19,22 @@
 # this file includes the results of the autoconf run
 include config.mk
 
+EMCC ?= emcc
+ROOT := $(abspath .)
+GMP_WASM ?= $(ROOT)/local/gmp-wasm
+export EM_CACHE ?= $(ROOT)/local/emscripten_cache
+EM_CPPFLAGS ?= -I$(ROOT) -I$(GMP_WASM)/include -std=c++17 -O2 -DXGILL_WASM
+
+EM_LDFLAGS := \
+    -s EXPORT_ES6=1 \
+    -s MODULARIZE=1 \
+    -s EXPORT_NAME=createModule \
+    -s ALLOW_MEMORY_GROWTH=1 \
+    -s EXPORTED_FUNCTIONS='["_xdb_to_json","_xdb_to_text","_xdb_flush_interned","_xdb_alloc","_xdb_free"]' \
+    -s EXPORTED_RUNTIME_METHODS='["UTF8ToString","HEAPU8"]' \
+    -sUSE_ZLIB=1 \
+    $(GMP_WASM)/lib/libgmp.a
+
 # configure --enable-debug
 ifdef DEBUG
   OPT = -O0 -DDEBUG
@@ -26,12 +42,12 @@ else
   OPT = -O2
 endif
 
-WARNINGS = -Wall -Wno-strict-aliasing -Werror -Wno-error=pointer-sign
 CXXWARNINGS = -Wno-non-virtual-dtor -Wno-delete-non-virtual-dtor -Wno-template-id-cdtor
 
 CXXFLAGS += -std=c++17 $(CXXWARNINGS)
-CPPFLAGS = -g ${OPT} -I${PWD} ${HOST_CFLAGS} ${WARNINGS}
-LDFLAGS = ${HOST_LDFLAGS} -lz -lsqlite3 -lgmp
+WARNINGS = -Wall -Wno-non-virtual-dtor -Wno-delete-non-virtual-dtor -Wno-strict-aliasing -Werror -Wno-error=pointer-sign
+CPPFLAGS = -g $(OPT) -I$(PWD) $(HOST_CFLAGS) $(WARNINGS) -MMD -MP
+LDFLAGS = $(HOST_LDFLAGS) -lz -lsqlite3 -lgmp
 
 # run 'make profile' to enable profiling in generated binaries
 ifdef PROFILE
@@ -104,12 +120,45 @@ ALL_BINS = \
  	bin/xdbkeys \
  	bin/xmanager
 
+WASM_CPP := \
+    util/json.cpp        \
+    util/buffer.cpp      \
+    util/stream.cpp      \
+    util/assert.cpp      \
+    util/alloc.cpp       \
+    util/primitive.cpp   \
+    util/hashcons.cpp    \
+    imlang/block.cpp     \
+    imlang/type.cpp      \
+    imlang/variable.cpp  \
+    imlang/exp.cpp       \
+    imlang/bit.cpp       \
+    imlang/opcode.cpp    \
+    wasm/imlang_stubs.cpp \
+    wasm/xdb-decode.cpp
+
+WASM_JS := wasm/xdb-decode.js
+
+WASM_OUT := wasm/xdb-json-wasm.mjs
+
+# Test runs under Node, which requires a different module. The test build uses
+# the same filename as production, but in the test/ directory, so the shared
+# wasm/xdb-decode.js wrapper loads it when the test passes its own URL.
+WASM_TEST_OUT := wasm/test/xdb-json-wasm.mjs
+
+# The wasm component requires emcc (Emscripten). release.sh sets WITHOUT_WASM=1
+# for --without-emsdk; when set, the wasm target and its install are skipped.
+ifeq ($(WITHOUT_WASM),)
+WASM_ALL := wasm/xdb-json-wasm.mjs
+else
+WASM_ALL :=
+endif
+
+.PHONY: all profile build-plugin install clean distclean wasm-test
 %.o: %.cpp ${INCLUDE}
 	${CXX} ${CXXFLAGS} ${CPPFLAGS} -fPIC -c $< -o $@
 
-.PHONY: all profile build-plugin clean
-
-all: build-libevent ${ALL_LIBS} ${ALL_BINS} build-plugin
+all: build-libevent ${ALL_LIBS} ${ALL_BINS} build-plugin $(WASM_ALL)
 
 # Auto-generated header dependencies — included after 'all' so they don't
 # change the default target.
@@ -157,6 +206,19 @@ bin/xsource: main/xsource.o $(ALL_LIBS)
 bin/xmanager: main/xmanager.o ${ALL_LIBS}
 	${CXX} libevent/*.o $< -o $@ ${BUILD_LIBS}
 
+# Production artifact: minimal, specialized to the SpiderMonkey JS shell.
+# A single emcc invocation emits the .mjs loader and its companion .wasm.
+$(WASM_OUT): $(WASM_CPP)
+	$(EMCC) $(EM_CPPFLAGS) $(EM_LDFLAGS) -s ENVIRONMENT=shell $(WASM_CPP) -o $(WASM_OUT)
+
+# Test-only artifact: same code built for node, so release.sh can run the wasm
+# tests without a JS shell. Not part of 'all' or install.
+$(WASM_TEST_OUT): $(WASM_CPP)
+	$(EMCC) $(EM_CPPFLAGS) $(EM_LDFLAGS) -s ENVIRONMENT=node $(WASM_CPP) -o $(WASM_TEST_OUT)
+
+wasm-test: $(WASM_TEST_OUT) $(WASM_OUT) bin/xdbfind
+	wasm/test/run-tests.sh test/test-output/gchazard/xdb.sqlite
+
 # libevent stuff
 
 build-libevent: libevent/Makefile
@@ -167,9 +229,39 @@ libevent/Makefile:
 
 # other
 
+DESTDIR  ?= /
+PREFIX   ?= usr
+NOSTRIP  ?=
+
+INSTROOT := $(DESTDIR)/$(PREFIX)
+BINDIR   := $(INSTROOT)/bin
+INSTALL  := install
+INSTALL_BIN := $(INSTALL) -m 755
+ifeq ($(NOSTRIP),)
+  INSTALL_BIN += -s
+endif
+
+install: all
+	$(INSTALL) -d \
+		$(INSTROOT)/bin \
+		$(INSTROOT)/libexec/sixgill/gcc \
+		$(INSTROOT)/libexec/sixgill/scripts/wrap_gcc \
+		$(INSTROOT)/libexec/sixgill/wasm
+	$(INSTALL_BIN) $(ALL_BINS) $(BINDIR)/
+	$(INSTALL_BIN) gcc/xgill.so $(INSTROOT)/libexec/sixgill/gcc/
+	$(INSTALL) scripts/run_complete $(INSTROOT)/libexec/sixgill/scripts/
+	$(INSTALL) scripts/wrap_gcc/* $(INSTROOT)/libexec/sixgill/scripts/wrap_gcc/
+ifeq ($(WITHOUT_WASM),)
+	$(INSTALL) $(WASM_JS) $(WASM_OUT) $(WASM_OUT:.mjs=.wasm) $(INSTROOT)/libexec/sixgill/wasm/
+endif
+	tar -C $(DESTDIR) -Jcvf $(DESTDIR)/sixgill.tar.xz $(PREFIX)
+	FOLDER=$$(sha256sum $(DESTDIR)/sixgill.tar.xz | head -c12)-sixgill && $(INSTALL) -d $$FOLDER && $(INSTALL) $(DESTDIR)/sixgill.tar.xz $$FOLDER/ && echo "** Created folder $$FOLDER"
+
 clean:
 	rm -f ${LIB_OBJS} bin/libxgill.a ${ALL_BINS} main/*.o $(DEPS)
+	rm -f wasm/xdb-json-wasm.* wasm/test/xdb-json-wasm.*
 	rm -f config.log config.status
+	rm -rf test/test-output
 	$(MAKE) -C gcc clean
 	$(MAKE) -C libevent clean
 
