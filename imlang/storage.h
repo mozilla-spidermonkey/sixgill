@@ -22,7 +22,11 @@
 // data structures.
 
 #include "block.h"
+#ifndef XGILL_WASM
 #include <backend/backend_compound.h>
+#else
+class Transaction;  // forward decl for BlockCFGUncompress signature only
+#endif
 
 NAMESPACE_XGILL_BEGIN
 

@@ -14,6 +14,11 @@
 worklist.sort
 xdb.sqlite*
 
+# Generated wasm files.
+wasm/xdb-json-wasm.mjs
+wasm/xdb-json-wasm.wasm
+wasm/test/xdb-json-wasm.*
+
 **/.libs/
 **/config.log
 **/config.mk

@@ -8,6 +8,12 @@ DO_CLEAN=1
 DO_BUILD=1
 DO_TEST=
 DO_PACKAGE=1
+
+# The wasm component is built by default, using the Emscripten SDK found via
+# $EMSDK. --with-emsdk DIR overrides the location; --without-emsdk skips wasm.
+WITH_EMSDK=1
+EMSDK_DIR="${EMSDK:-}"
+
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "--no-clean" ]; then
     shift
@@ -58,6 +64,18 @@ while [ "$#" -gt 0 ]; do
     fi
     shift
     echo "SET TARGET_CC TO $TARGET_CC"
+  elif [ "$1" = "--with-emsdk" ]; then
+    shift
+    EMSDK_DIR="$1"
+    WITH_EMSDK=1
+    shift
+  elif [[ "$1" == --with-emsdk=* ]]; then
+    EMSDK_DIR="${1#*=}"
+    WITH_EMSDK=1
+    shift
+  elif [ "$1" = "--without-emsdk" ]; then
+    shift
+    WITH_EMSDK=
   elif [ "$1" = "--" ]; then
     shift
     break
@@ -65,6 +83,26 @@ while [ "$#" -gt 0 ]; do
     break
   fi
 done
+
+# Resolve the Emscripten SDK unless --without-emsdk was given. Fail loudly if it
+# is required but cannot be found, rather than dying later inside make on emcc.
+if [ -n "$WITH_EMSDK" ]; then
+  emsdk_hint="set \$EMSDK or pass --with-emsdk DIR, or pass --without-emsdk to build without wasm"
+  if [ -z "$EMSDK_DIR" ]; then
+    echo "error: Emscripten SDK not specified: $emsdk_hint" >&2
+    exit 1
+  fi
+  if [ ! -f "$EMSDK_DIR/emsdk_env.sh" ]; then
+    echo "error: $EMSDK_DIR/emsdk_env.sh not found: $emsdk_hint" >&2
+    exit 1
+  fi
+  EMSDK_QUIET=1 source "$EMSDK_DIR/emsdk_env.sh"
+  export EM_CACHE="$(dirname "$0")/local/emscripten_cache"
+  mkdir -p "$EM_CACHE"
+else
+  # Tell make to drop the wasm target and its install step.
+  export WITHOUT_WASM=1
+fi
 
 # function need_compiler() {
 #   COMPILER="${COMPILER:-$CC}"
@@ -86,6 +124,13 @@ function build() {
 function run_test() {
   echo '------------ running tests ---------------'
   ( cd test; ${PYTHON:-python3} run-test.py )
+
+  # The wasm tests need the node build of the module (emcc) and consume the
+  # database produced by the suite above, so run them here when emsdk is enabled.
+  if [ -n "$WITH_EMSDK" ]; then
+    echo '------------ running wasm tests ---------------'
+    make wasm-test
+  fi
 }
 
 function make_checksum() {
@@ -95,25 +140,8 @@ function make_checksum() {
 }
 
 function package() {
-  D=release-tmp
-  set +e
-  rm -rf $D
-  mkdir -p $D/sixgill/{usr/bin,usr/libexec/sixgill/{gcc,scripts/wrap_gcc}}
-  set -e
-  cp bin/* $D/sixgill/usr/bin
-  cp gcc/xgill.so $D/sixgill/usr/libexec/sixgill/gcc
-  cp scripts/run_complete $D/sixgill/usr/libexec/sixgill/scripts
-  cp scripts/wrap_gcc/* $D/sixgill/usr/libexec/sixgill/scripts/wrap_gcc
-  rm $D/sixgill/usr/bin/*.a
-  [ -z "$NOSTRIP" ] && strip $D/sixgill/usr/bin/* || true
-  ( cd $D && tar -Jcvf - sixgill ) > $D/sixgill.tar.xz
-  make_checksum "$D/sixgill.tar.xz"
-  SHORT=$(echo "$CKSUM" | cut -c-12)
-  FOLDER="$SHORT-sixgill"
-  mkdir $FOLDER
-  mv $D/sixgill.tar.xz $FOLDER
-  # cp setup.sh.sixgill $FOLDER
-  echo "** Created folder $FOLDER"
+  rm -rf release-tmp || true
+  DESTDIR=release-tmp/sixgill make install
 }
 
 function need_folder() {
