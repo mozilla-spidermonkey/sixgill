@@ -4,14 +4,10 @@
 
 set -e
 
-MESSAGE=
-
 DO_CLEAN=1
 DO_BUILD=1
 DO_TEST=
 DO_PACKAGE=1
-DO_EMPLACE=1
-DO_DISTRIBUTE=1
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "--no-clean" ]; then
     shift
@@ -31,15 +27,11 @@ while [ "$#" -gt 0 ]; do
     DO_BUILD=1
     DO_TEST=1
     DO_PACKAGE=1
-    DO_EMPLACE=
-    DO_DISTRIBUTE=
   elif [ "$1" = "--build" ]; then
     shift
     DO_BUILD=1
     DO_TEST=
     DO_PACKAGE=1
-    DO_EMPLACE=
-    DO_DISTRIBUTE=
   elif [ "$1" = "--folder" ]; then
     shift
     FOLDER="$1"
@@ -47,22 +39,9 @@ while [ "$#" -gt 0 ]; do
     DO_BUILD=
     DO_PACKAGE=
     shift
-  elif [ "$1" = "--no-distribute" ]; then
-    shift
-    DO_DISTRIBUTE=
-  elif [ "$1" = "--distribute" ]; then
-    shift
-    DO_CLEAN=
-    DO_BUILD=
-    DO_PACKAGE=
-    DO_EMPLACE=
   elif [ "$1" = "--srcdir" ]; then
     shift
     SRCDIR="$1"
-    shift
-  elif [ "$1" = "--message" ]; then
-    shift
-    MESSAGE="$1"
     shift
   elif [ "$1" = "--target-cc" ]; then
     shift
@@ -97,13 +76,6 @@ done
 #     read COMPILER
 #   fi
 # }
-
-function need_message() {
-  if [ -z "$MESSAGE" ]; then
-    echo -n "Message for tooltool upload> "
-    read MESSAGE
-  fi
-}
 
 function build() {
   ./autogen.sh
@@ -165,11 +137,7 @@ function need_srcdir() {
 }
 
 if ! [[ -n "$DO_PACKAGE" ]]; then need_folder; fi
-if [[ -n "$DO_EMPLACE" ]]; then need_srcdir; fi
-if [[ -n "$DO_DISTRIBUTE" ]]; then need_message; fi
 
 if [[ -n "$DO_BUILD" ]]; then build "$@"; fi
 if [[ -n "$DO_TEST" ]]; then run_test; fi
 if [[ -n "$DO_PACKAGE" ]]; then package; fi
-if [[ -n "$DO_EMPLACE" ]]; then emplace; fi
-if [[ -n "$DO_DISTRIBUTE" ]]; then distribute; fi

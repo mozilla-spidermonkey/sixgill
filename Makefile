@@ -26,7 +26,10 @@ else
   OPT = -O2
 endif
 
-WARNINGS = -Wall -Wno-non-virtual-dtor -Wno-delete-non-virtual-dtor -Wno-strict-aliasing -Werror -Wno-error=pointer-sign
+WARNINGS = -Wall -Wno-strict-aliasing -Werror -Wno-error=pointer-sign
+CXXWARNINGS = -Wno-non-virtual-dtor -Wno-delete-non-virtual-dtor -Wno-template-id-cdtor
+
+CXXFLAGS += -std=c++17 $(CXXWARNINGS)
 CPPFLAGS = -g ${OPT} -I${PWD} ${HOST_CFLAGS} ${WARNINGS}
 LDFLAGS = ${HOST_LDFLAGS} -lz -lgmp
 
@@ -35,103 +38,6 @@ ifdef PROFILE
   CPPFLAGS += -pg
   LDFLAGS += -pg
 endif
-
-BACKEND_INC = \
-	backend/action.h \
-	backend/backend.h \
-	backend/backend_block.h \
-	backend/backend_compound.h \
-	backend/backend_hash.h \
-	backend/backend_util.h \
-	backend/backend_xdb.h \
-	backend/operand.h \
-	backend/serial.h \
-	backend/transaction.h
-
-IMLANG_INC = \
-	imlang/bit.h \
-	imlang/block.h \
-	imlang/exp.h \
-	imlang/filename.h \
-	imlang/interface.h \
-	imlang/loopsplit.h \
-	imlang/opcode.h \
-	imlang/serial.h \
-	imlang/storage.h \
-	imlang/trace.h \
-	imlang/type.h \
-	imlang/variable.h \
-	imlang/visitor.h
-
-MEMORY_INC = \
-	memory/alias.h \
-	memory/baked.h \
-	memory/mblock.h \
-	memory/callgraph.h \
-	memory/clobber.h \
-	memory/escape.h \
-	memory/modset.h \
-	memory/serial.h \
-	memory/simplify.h \
-	memory/mstorage.h \
-	memory/summary.h
-
-INFER_INC = \
-	infer/expand.h \
-	infer/infer.h \
-	infer/invariant.h \
-	infer/nullterm.h
-
-CHECK_INC = \
-	check/checker.h \
-	check/decision.h \
-	check/frame.h \
-	check/path.h \
-	check/propagate.h \
-	check/sufficient.h \
-	check/where.h
-
-SOLVE_INC = \
-	solve/constraint.h \
-	solve/solver.h \
-	solve/solver_hash.h \
-	solve/solver-mux.h \
-	solve/union_find.h
-
-UTIL_INC = \
-	util/alloc.h \
-	util/assert.h \
-	util/buffer.h \
-	util/config.h \
-	util/hashcache.h \
-	util/hashcache_impl.h \
-	util/hashcons.h \
-	util/hashcons_impl.h \
-	util/hashtable.h \
-	util/hashtable_impl.h \
-	util/list.h \
-	util/monitor.h \
-	util/primitive.h \
-	util/stream.h \
-	util/istream.h \
-	util/ostream.h \
-	util/timer.h \
-	util/vector.h \
-	util/xml.h
-
-XDB_INC = \
-	xdb/layout.h \
-	xdb/xdb.h
-
-INCLUDE = \
-	${BACKEND_INC} \
-	${IMLANG_INC} \
-	${MEMORY_INC} \
-	${INFER_INC} \
-	${CHECK_INC} \
-	${SOLVE_INC} \
-	${UTIL_INC} \
-	${XDB_INC}
 
 BACKEND_OBJS = \
 	backend/action.o \
@@ -208,11 +114,11 @@ XDB_OBJS = \
 	xdb/xdb.o
 
 LIB_OBJS = \
-	${BACKEND_OBJS} \
-	${IMLANG_OBJS} \
-	${MEMORY_OBJS} \
-	${UTIL_OBJS} \
-	${XDB_OBJS}
+	$(BACKEND_OBJS) \
+	$(MEMORY_OBJS) \
+	$(IMLANG_OBJS) \
+	$(UTIL_OBJS) \
+	$(XDB_OBJS)
 
 XDB_LIB_OBJS = \
 	util/alloc.o \
@@ -260,42 +166,60 @@ CHK_OBJS += solve/solver-cvc3.o solve/cvc3_interface.o
 endif
 
 %.o: %.cpp ${INCLUDE}
-	${CXX} ${CPPFLAGS} -fPIC -c $< -o $@
+	${CXX} ${CXXFLAGS} ${CPPFLAGS} -fPIC -c $< -o $@
 
 all: .have_yices build-libevent ${ALL_LIBS} ${ALL_BINS} build-plugin # build-elsa
+
+# Auto-generated header dependencies — included after 'all' so they don't
+# change the default target.
+%.d: %.cpp ${INCLUDE}
+	${CXX} ${CXXFLAGS} ${CPPFLAGS} -MM -fPIC -c $< -o $@
+
+DEPS = $(LIB_OBJS:.o=.d) $(MAIN_OBJS:.o=.d)
+
+# Avoid including and therefore depending on and rebuilding the .d files when
+# doing a `make clean`.
+ifeq ($(filter clean,$(MAKECMDGOALS)),)
+-include $(DEPS)
+endif
+
+$(ALL_BINS) $(ALL_LIBS): | bin
+
+bin:
+	@mkdir bin
 
 profile:
 	$(MAKE) all "PROFILE=1"
 
-bin/xdb.so: ${XDB_LIB_OBJS}
+bin/xdb.so: $(XDB_LIB_OBJS)
 	rm -f $@
-	${CXX} -shared -fPIC -o $@ ${XDB_LIB_OBJS} ${LDFLAGS}
+	${CXX} -shared -fPIC -o $@ $(XDB_LIB_OBJS) $(LDFLAGS)
 
-bin/libxgill.a: ${LIB_OBJS}
+bin/libxgill.a: $(LIB_OBJS)
 	rm -f $@
-	ar -r $@ ${LIB_OBJS}
+	ar -r $@ $(LIB_OBJS)
 
 bin/libxcheck.a: ${CHK_OBJS}
 	rm -f $@
 	ar -r $@ ${CHK_OBJS}
 
 ifeq ($(GCC_PLUGIN_SUPPORT),yes)
-build-plugin:
-	make -C gcc
+build-plugin: $(ALL_LIBS)
+	$(MAKE) -C gcc
 else
-build-plugin:
+build-plugin: bin/libxgill.a
 endif
 
 BUILD_LIBS = ${ALL_LIBS} ${CVC3_LIBS} ${LDFLAGS}
 
-bin/xdbfind: main/xdbfind.o ${ALL_LIBS}
-	${CXX} $< -o $@ ${BUILD_LIBS}
+bin/xdbfind: main/xdbfind.o $(ALL_LIBS)
+	$(CXX) $< -o $@ $(BUILD_LIBS)
 
-bin/xdbkeys: main/xdbkeys.o ${ALL_LIBS}
-	${CXX} $< -o $@ ${BUILD_LIBS}
+bin/xdbkeys: main/xdbkeys.o $(ALL_LIBS)
+	$(CXX) $< -o $@ $(BUILD_LIBS)
 
-bin/xsource: main/xsource.o ${ALL_LIBS}
-	${CXX} $< -o $@ ${BUILD_LIBS}
+bin/xsource: main/xsource.o $(ALL_LIBS)
+	$(CXX) $< -o $@ $(BUILD_LIBS)
 
 bin/xmemlocal: main/xmemlocal.o ${ALL_LIBS}
 	${CXX} $< -o $@ ${BUILD_LIBS}
@@ -315,7 +239,7 @@ bin/xmanager: main/xmanager.o ${ALL_LIBS}
 # libevent stuff
 
 build-libevent: libevent/Makefile
-	make -C libevent
+	$(MAKE) -C libevent
 
 libevent/Makefile:
 	cd libevent && CPPFLAGS='$(filter-out -Werror,${CPPFLAGS})' ./configure
@@ -325,23 +249,23 @@ libevent/Makefile:
 ifdef DEBUG
 
 build-elsa:
-	make -C elsa debug
+	$(MAKE) -C elsa debug
 
 else # DEBUG
 
 build-elsa:
-	make -C elsa
+	$(MAKE) -C elsa
 
 endif # DEBUG
 
 # other
 
 clean:
-	rm -f ${LIB_OBJS} ${XDB_LIB_OBJS} ${CHK_OBJS} bin/libmemory.a bin/libimlang.a bin/libxgill.a bin/libxcheck.a ${ALL_BINS} main/*.o
+	rm -f ${LIB_OBJS} ${XDB_LIB_OBJS} ${CHK_OBJS} bin/libmemory.a bin/libimlang.a bin/libxgill.a bin/libxcheck.a ${ALL_BINS} main/*.o $(DEPS)
 	rm -f config.log config.status
-	make -C gcc clean
-	make -C libevent clean
+	$(MAKE) -C gcc clean
+	$(MAKE) -C libevent clean
 
 distclean: clean
 	rm -f config.mk config.h
-	make -C libevent distclean
+	$(MAKE) -C libevent distclean

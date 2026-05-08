@@ -25,7 +25,9 @@ all: xgill.so
 xgill.so: $(XGILL_OBJS) ../bin/libxgill.a
 	$(CXX) -shared -fPIC -o $@ $^ -lstdc++ ${HOST_LDFLAGS} -lz -Wl,-Bstatic -lgmp -Wl,-Bdynamic
 
-%.o: %.c xgill.h ../imlang/interface.h
+# Depend on config.mk so that switching to a different GCC (and therefore
+# different plugin headers) rebuilds everything.
+%.o: %.c xgill.h ../imlang/interface.h ../config.mk
 	$(PLUGIN_CC) $(HOST_CFLAGS) -I$(GCC_PLUGIN_HEADERS) -g3 -fPIC -Wall -Wno-unused-value -c -o $@ $<
 
 clean:
