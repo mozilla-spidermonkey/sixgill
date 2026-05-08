@@ -8,6 +8,11 @@
 /bin/x*
 /*-sixgill/
 
+/build
+/source/
+
+worklist.sort
+xdb.sqlite*
 
 **/.libs/
 **/config.log
@@ -19,6 +24,7 @@ config.json
 config.h
 libevent/Makefile
 libevent/config.h
+libevent/configure.lineno
 libevent/libtool
 libevent/sample/Makefile
 libevent/sample/event-test
@@ -38,3 +44,4 @@ libevent/test/test-weof
 *.so
 *.lo
 *.la
+*.d
