@@ -51,6 +51,8 @@ class ConfigOption
   // get the name of this option.
   const char* Name() const { return m_name; }
 
+  bool AcceptsValue() const { return !!m_default_value; }
+
   // print information on this option to cout.
   void Print();
 

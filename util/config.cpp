@@ -84,7 +84,7 @@ void ConfigOption::Enable()
 
 void ConfigOption::Print()
 {
-  cout << "-" << m_name;
+  cout << "--" << m_name;
   if (m_default_value != NULL)
     cout << "=" << m_default_value;
   cout << endl;
@@ -155,7 +155,8 @@ bool Config::Parse(int argc, const char **argv,
       // value will be NULL-terminated
       const char *option_value = NULL;
 
-      option_name = arg + 1;
+      // Allow either a single or a double dash for now.
+      option_name = arg[1] == '-' ? arg + 2 : arg + 1;
 
       const char *eqpos = strchr(arg, '=');
       if (eqpos == NULL) {
@@ -187,6 +188,14 @@ bool Config::Parse(int argc, const char **argv,
             return false;
           }
 
+          // Allow --option=foo and --option foo (also -option=foo and -option foo).
+          if (*option_value == '\0' && o->AcceptsValue()) {
+            if (++aind == (size_t) argc) {
+              return false;
+            }
+            option_value = argv[aind];
+          }
+
           if (!o->SetValue(option_value))
             return false;
 
@@ -196,7 +205,7 @@ bool Config::Parse(int argc, const char **argv,
       }
 
       if (!found) {
-        if (strcasecmp(arg, "-help") != 0)
+        if (strcasecmp(arg, "-help") != 0 && strcasecmp(arg, "--help") != 0)
           cout << "ERROR: Unknown option " << arg << endl;
         return false;
       }
