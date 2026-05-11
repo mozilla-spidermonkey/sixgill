@@ -59,16 +59,6 @@ GlobalName(tree decl)
 {
   struct XIL_CString full_name = { NULL, 0 };
 
-  // if there is an annot_global then it has the global name.
-  tree attr = DECL_ATTRIBUTES(decl);
-  while (attr) {
-    const char *purpose = XIL_DecodeAttribute(attr, &full_name.str, NULL);
-
-    if (purpose && !strcmp(purpose, "annot_global") && full_name.str)
-      return full_name;
-    attr = TREE_CHAIN(attr);
-  }
-
   // there are several cases we need to consider in constructing decl's name.
   // 1. globals in C
   //    use the variable's name, this must be unique.
@@ -159,17 +149,6 @@ struct XIL_CString XIL_GlobalName(tree decl, bool for_context)
 
 const char* XIL_SourceName(tree decl)
 {
-  // if there is an annot_source then it has the global name.
-  tree attr = DECL_ATTRIBUTES(decl);
-  while (attr) {
-    const char *name = NULL;
-    const char *purpose = XIL_DecodeAttribute(attr, &name, NULL);
-
-    if (purpose && !strcmp(purpose, "annot_source") && name)
-      return name;
-    attr = TREE_CHAIN(attr);
-  }
-
   // if the declaration has an explicit name then use that.
   tree idnode = DECL_NAME(decl);
   if (idnode) {
@@ -212,18 +191,18 @@ XIL_Var XIL_TranslateParam(tree param_decl, const char *name)
   // remaining parameters need to be adjusted by one.
   if (TREE_CODE(TREE_TYPE(func_decl)) == METHOD_TYPE) {
     if (param_index == 0)
-      return XIL_VarThis(false);
+      return XIL_VarThis();
     param_index--;
   }
 
   if (!name) {
     name = (char*) xmalloc(10);
     sprintf((char*)name, "__arg%d", param_index);
-    XIL_Var ret = XIL_VarArg(param_index, name, false);
+    XIL_Var ret = XIL_VarArg(param_index, name);
     free((char*) name);
     return ret;
   } else {
-    return XIL_VarArg(param_index, name, false);
+    return XIL_VarArg(param_index, name);
   }
 }
 
@@ -323,31 +302,6 @@ XIL_Var generate_TranslateVar(tree decl)
       return *var_temp;
     }
 
-    // check for special annotation attributes if this is a param/local/etc.
-    // in the function being annotated. don't add types in these cases,
-    // the variable does not actually belong to the active block.
-    tree attr = DECL_ATTRIBUTES(decl);
-    while (attr) {
-      const char *text_value = NULL;
-      int int_value = 0;
-      const char *purpose = XIL_DecodeAttribute(attr, &text_value, &int_value);
-
-      if (purpose && !strcmp(purpose, "annot_param"))
-        return XIL_VarArg(int_value, name.str, true);
-      if (purpose && !strcmp(purpose, "annot_return"))
-        return XIL_VarReturn(true);
-      if (purpose && !strcmp(purpose, "annot_local") && text_value)
-        return XIL_VarLocal(text_value, name.str, true);
-
-      if (purpose && !strcmp(purpose, "annot_this_var")) {
-        // should have already found and filtered these.
-        XIL_PrintStack();
-        gcc_unreachable();
-      }
-
-      attr = TREE_CHAIN(attr);
-    }
-
     struct XIL_CString full_name = { NULL, 0 };
 
     // figure out whether this is a local.
@@ -427,11 +381,11 @@ XIL_Var generate_TranslateVar(tree decl)
       if (index) {
         char *new_name = (char*) xmalloc(strlen(name.str) + 10);
         sprintf(new_name, "%s:%d", name.str, index);
-        xil_decl = XIL_VarLocal(new_name, name.str, false);
+        xil_decl = XIL_VarLocal(new_name, name.str);
         free(new_name);
       }
       else {
-        xil_decl = XIL_VarLocal(name.str, name.str, false);
+        xil_decl = XIL_VarLocal(name.str, name.str);
       }
 
       local = (struct XIL_LocalData *) xmalloc(sizeof(struct XIL_LocalData));
@@ -445,7 +399,7 @@ XIL_Var generate_TranslateVar(tree decl)
   }
 
   case RESULT_DECL:
-    xil_decl = XIL_VarReturn(false);
+    xil_decl = XIL_VarReturn();
     break;
 
   default:

@@ -30,12 +30,26 @@ static bool is_keeping_source() {
   return keep_source_env && *keep_source_env && *keep_source_env != '0';
 }
 
-// Returns true if table_name names a file containing pre- or post-processed
+// Every table in XDB_FILE.
+static const char *const g_main_tables[] = {
+  BODY_DATABASE, INIT_DATABASE, COMP_DATABASE, FINGERPRINT_DATABASE, NULL
+};
+
+// Every table in XDB_SOURCE_FILE.
+static const char *const g_source_tables[] = {
+  SOURCE_DATABASE, PREPROC_DATABASE, NULL
+};
+
+// Returns true if table_name names a table containing pre- or post-processed
 // source code.
 static bool is_source_table(const char *table_name)
 {
-  return strcmp(table_name, SOURCE_DATABASE)  == 0 ||
-         strcmp(table_name, PREPROC_DATABASE) == 0;
+  for (const char *const *t = g_source_tables; *t; t++) {
+    if (strcmp(table_name, *t) == 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -71,13 +85,15 @@ static XdbFile *get_xdb_file(const char *table_name, CreateMode mode)
     static bool keepingSource = is_keeping_source();
     if (!g_xdb_source && keepingSource) {
       g_xdb_source = new XdbFile(get_xdb_path(XDB_SOURCE_FILE),
-                                 mode == CreateMode::Create ? XdbFile::kCreate : 0);
+                                 mode == CreateMode::Create ? XdbFile::kCreate : 0,
+                                 g_source_tables);
     }
     return g_xdb_source;
   }
   if (!g_xdb_main) {
     g_xdb_main = new XdbFile(get_xdb_path(XDB_FILE),
-                             mode == CreateMode::Create ? XdbFile::kCreate : 0);
+                             mode == CreateMode::Create ? XdbFile::kCreate : 0,
+                             g_main_tables);
   }
   return g_xdb_main;
 }
@@ -107,23 +123,15 @@ Xdb* GetDatabase(const char *table_name, CreateMode mode)
   XdbFile *file = Backend_IMPL::get_xdb_file(table_name, mode);
   if (!file) return NULL;
 
-  if (mode == CreateMode::Create && !file->Exists()) {
-    file->Create();
-  }
-
-  Xdb *xdb = file->Table(table_name);
-
   if (mode == CreateMode::Create) {
-    xdb->Create();  // idempotent: DDL uses IF NOT EXISTS; stmts skipped if prepared
-    if (xdb->HasError()) {
-      logout << "ERROR: Corrupt database table " << table_name << endl;
+    file->Create();  // idempotent; creates all of the file's tables
+    if (file->HasError()) {
+      logout << "ERROR: Corrupt database " << file->GetPath() << endl;
       file->Recover();
-      xdb = file->Table(table_name);
-      xdb->Create();
     }
   }
 
-  return xdb;
+  return file->Table(table_name);
 }
 
 void FlushDatabases()

@@ -45,7 +45,13 @@ class XdbFile
   // If kCreate is set, the file is created and pragmas are applied now.
   // Otherwise the open is attempted; if the file is absent the XdbFile
   // sits dormant (Exists() returns false) until Create() is called.
-  XdbFile(const char *path, uint32_t flags);
+  //
+  // tables is an optional NULL-terminated list of every table in the file.
+  // When given, all of them are created together with the file, so a table
+  // exists exactly when the file does, and Table() accepts only these names.
+  // When omitted (for tools that open an arbitrary file), any name is
+  // accepted and Xdb::Exists() checks the file's schema.
+  XdbFile(const char *path, uint32_t flags, const char *const *tables = NULL);
   ~XdbFile();
 
   const char *GetPath() const { return m_path; }
@@ -54,18 +60,18 @@ class XdbFile
   // Whether the file is open and accessible.
   bool Exists() const { return m_db != NULL && !m_error; }
 
-  // Open with create + apply pragmas. Idempotent if already open.
+  // Open with create, apply pragmas, and create all declared tables.
+  // Idempotent.
   void Create();
 
   // COMMIT any pending write transaction.
   void Flush();
 
-  // Close, delete the file, reopen with Create, and recreate (empty) every
-  // table previously handed out via Table() that was in use.
+  // Close, delete the file, and Create() it again, empty. Previously
+  // handed-out Xdb handles remain valid.
   void Recover();
 
   // Return the Xdb handle for the named SQL table within this file.
-  // Creates the handle if this is the first call for that name.
   // The returned Xdb* is owned by this XdbFile; do not delete it.
   // Calling Table() twice with the same name returns the same pointer.
   Xdb *Table(const char *table_name);
@@ -77,12 +83,18 @@ class XdbFile
   bool     m_error;
   bool     m_in_tx;
 
+  // Whether a table list was passed to the constructor.
+  bool     m_declared_tables;
+  // Whether the declared tables have been created in this connection.
+  bool     m_tables_created;
+
   static const int kMaxTables = 16;
   int   m_table_count;
   Xdb  *m_tables[kMaxTables];
 
   void open_db(bool create);
   void setup_pragmas();
+  void create_tables();
   void finalize_file();
   void begin_tx();
   void set_error(int rc, const char *context);
@@ -100,10 +112,6 @@ class Xdb
   // yet counts as not existing; a file with an open or read error is fatal.
   // Callers must check this before any of the operations below.
   bool Exists() const;
-
-  // Run CREATE TABLE IF NOT EXISTS for this table, opening the file
-  // first if necessary.
-  void Create();
 
   // Print row count and total value bytes to logfile.
   void PrintStats();

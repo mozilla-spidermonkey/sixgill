@@ -24,32 +24,20 @@ EXTERN_BEGIN
 #include <stdlib.h>
 #include <target.h>
 #include <cp/cp-tree.h>
+#include <stringpool.h>
+#include <attribs.h>
 
-// for annotation processing
-#include <cpplib.h>
 EXTERN_END
 
 // environment utility functions
 
 FILE *xil_log = NULL;
-const char *xil_log_directory = NULL;
 const char *xil_remote_address = NULL;
 
 const char *xil_gcc_path = NULL;
 const char *xil_plugin_path = NULL;
 const char *xil_command = NULL;
-bool xil_has_annotation = false;
-tree xil_annotation_this = NULL;
 bool xil_prefix_with_mangled = false;
-
-const char *xil_annotation_single = NULL;
-
-// if our input file is generating an annotation CFG, the class ("func", "init"
-// or "comp"), kind and name of annotation. the name of the variable/type
-// being annotated comes from the annotation function.
-static const char *annotation_class;
-static const char *annotation_kind;
-static const char *annotation_name;
 
 int xil_pointer_width = 0;
 struct XIL_ScopeEnv *xil_active_scope = NULL;
@@ -256,14 +244,12 @@ void XIL_PrintStack()
 const char* XIL_DecodeAttribute(tree attr,
                                 const char **text_value, int *int_value)
 {
-  tree purpose = TREE_PURPOSE(attr);
-  if (!purpose)
+  if (!TREE_PURPOSE(attr))
     return NULL;
-  if (TREE_CODE(purpose) != IDENTIFIER_NODE) {
-    // All of our attributes so far are simple strings. Attributes with multiple args
-    // will show up here.
-    if (TREE_CODE(purpose) == TREE_LIST)
-      return NULL;
+  // Scoped attributes such as [[moz::annotate("...")]] store a
+  // (namespace, name) list as the purpose; this strips the namespace.
+  tree purpose = get_attribute_name(attr);
+  if (!purpose || TREE_CODE(purpose) != IDENTIFIER_NODE) {
     TREE_UNEXPECTED(attr);
     return NULL;
   }
@@ -303,42 +289,17 @@ void XIL_GenerateBlock(tree decl)
 {
   memset(&xil_active_env, 0, sizeof(struct XIL_BlockEnv));
 
-  XIL_Var xil_var = NULL;
-  int annot_type = 0;
-
-  if (xil_has_annotation) {
-    gcc_assert(annotation_name);
-    gcc_assert(TREE_CODE(decl) == FUNCTION_DECL);
-
-    // get the name of the function/global/type being annotated; this looks at
-    // any annot_global / annot_source attributes on the decl.
-    struct XIL_CString full_name = XIL_GlobalName(decl);
-    const char *name = XIL_SourceName(decl);
-
-    if (!strcmp(annotation_class, "func"))
-      xil_var = XIL_VarFunc(full_name.str, name);
-    else if (!strcmp(annotation_class, "init"))
-      xil_var = XIL_VarGlob(full_name.str, name);
-    else if (!strcmp(annotation_class, "comp")) {
-      xil_var = XIL_VarGlob(full_name.str, name);
-      annot_type = 1;
-    }
-
-    XIL_ReleaseCString(&full_name);
-
-    gcc_assert(xil_var);
-  }
-  else {
-    xil_var = XIL_TranslateVar(decl);
-  }
-
+  // Queue up any 'annotate' attributes on the decl as pending annotations,
+  // so they will be attached to the function type when it is created.
   tree type = TREE_TYPE(decl);
-
-  // Process any attributes, queuing them up as pending attributes for any
-  // function type that will be created in XIL_TranslateType.
+  // Check both DECL_ATTRIBUTES and TYPE_ATTRIBUTES since GCC may place
+  // function declaration attributes on either the decl or the type.
   tree attr = DECL_ATTRIBUTES(decl);
+  if (!attr)
+    attr = TYPE_ATTRIBUTES(type);
   while (attr) {
-    struct XIL_PendingAnnotation *pending = (struct XIL_PendingAnnotation*) xcalloc(1, sizeof(struct XIL_PendingAnnotation));
+    struct XIL_PendingAnnotation *pending =
+      (struct XIL_PendingAnnotation *) xcalloc(1, sizeof(struct XIL_PendingAnnotation));
     pending->type = type;
     pending->attr = attr;
     pending->next = xil_active_env.annots;
@@ -347,6 +308,7 @@ void XIL_GenerateBlock(tree decl)
   }
 
   XIL_Type xil_type = XIL_TranslateType(type);
+  XIL_Var xil_var = XIL_TranslateVar(decl);
 
   // fixup the type for destructors. these have an __in_chrg argument that
   // doesn't show up when the functions are called.
@@ -367,23 +329,23 @@ void XIL_GenerateBlock(tree decl)
     return;
 
   const char *name = XIL_GetVarName(xil_var);
+  if (!name) {
+    fprintf(xil_log, "XIL: NULL name for decl, skipping\n");
+    fflush(xil_log);
+    return;
+  }
 
-  // parse the annotation kind.
-  XIL_AnnotationKind use_kind = (XIL_AnnotationKind) 0;
-  if (annotation_kind) {
-#define XIL_TEST_ANNOT(_, STR, VALUE)                           \
-    if (!strcmp(annotation_kind, STR)) use_kind = (XIL_AnnotationKind) VALUE;
-  XIL_ITERATE_ANNOT(XIL_TEST_ANNOT)
-#undef XIL_TEST_ANNOT
-    gcc_assert(use_kind);
+  const char *decl_file = DECL_SOURCE_FILE(decl);
+  int decl_line = DECL_SOURCE_LINE(decl);
+  if (!decl_file) {
+    fprintf(xil_log, "XIL: NULL source file for decl '%s', skipping\n", name);
+    fflush(xil_log);
+    return;
   }
 
   xil_active_env.decl = decl;
   xil_active_env.decl_name = name;
-  XIL_SetActiveBlock(xil_var, annotation_name, use_kind, annot_type);
-
-  const char *decl_file = DECL_SOURCE_FILE(decl);
-  int decl_line = DECL_SOURCE_LINE(decl);
+  XIL_SetActiveBlock(xil_var);
 
   // get the begin file/line for a function definition. this is somewhat
   // trickier than might be expected. the decl's location sometimes comes from
@@ -399,8 +361,9 @@ void XIL_GenerateBlock(tree decl)
       const char *res_decl_file = DECL_SOURCE_FILE(result);
       int res_decl_line = DECL_SOURCE_LINE(result);
 
-      if (strcmp(decl_file, res_decl_file) ||
-          res_decl_line > decl_line + 10) {
+      if (res_decl_file &&
+          (strcmp(decl_file, res_decl_file) ||
+           res_decl_line > decl_line + 10)) {
         decl_file = res_decl_file;
         decl_line = res_decl_line;
       }
@@ -440,8 +403,7 @@ void XIL_GenerateBlock(tree decl)
   // add the decl variable to the active CFG. override any previous type we
   // had for the variable, to account for seeing multiple definitions of
   // a variable, which gcc allows, e.g. int buf[]; int buf[10];
-  if (!xil_has_annotation)
-    XIL_CFGAddVar(xil_var, xil_type, 1);
+  XIL_CFGAddVar(xil_var, xil_type, 1);
 
   // current point for traversal of the function/initializer.
   XIL_PPoint point = xil_active_env.entry_point;
@@ -492,24 +454,10 @@ void XIL_GenerateBlock(tree decl)
   //  exit(1);
   //}
 
-  // process any annotations read in from file for the function,
-  // now that we know all locals.
-  int count = XIL_GetAnnotationCount(name, !is_function, false);
-  int ind = 0;
-  for (; ind < count; ind++) {
-    const char *where;
-    const char *point_text, *annot_text;
-    int trusted;
-    XIL_GetAnnotation(name, !is_function, false, ind, &where,
-                      &point_text, &annot_text, &trusted);
-    XIL_ProcessAnnotationRead(decl, where, point_text, annot_text, trusted);
-  }
-
-  // process annotations discovered for CSU types.
+  // free any remaining pending annotations (should normally be empty).
   while (xil_active_env.annots) {
     struct XIL_PendingAnnotation *annot = xil_active_env.annots;
     xil_active_env.annots = annot->next;
-    XIL_ProcessAnnotationAttr(annot->type, annot->attr, NULL, NULL);
     free(annot);
   }
 
@@ -524,7 +472,6 @@ void XIL_GenerateBlock(tree decl)
 // additional settings we get from plugin arguments.
 static const char *normalize_directory = NULL;
 static const char *log_file = NULL;
-static const char *annotation_file = NULL;
 
 void gcc_plugin_start_unit(void *gcc_data, void *user_data)
 {
@@ -533,21 +480,6 @@ void gcc_plugin_start_unit(void *gcc_data, void *user_data)
     gcc_assert(xil_log);
 
     XIL_SetLogFile(xil_log);
-
-    // figure out the directory containing the log. this will be used for
-    // making temporary files (i.e. annotation files).
-    char *log_dir = xstrdup(log_file);
-    char *pos = log_dir;
-    while (true) {
-      char *slash_pos = strchr(pos + 1, '/');
-      if (!slash_pos) {
-        *pos = 0;
-        break;
-      }
-      pos = slash_pos;
-    }
-    if (pos != log_dir)
-      xil_log_directory = log_dir;
   }
   else {
     xil_log = stdout;
@@ -556,9 +488,6 @@ void gcc_plugin_start_unit(void *gcc_data, void *user_data)
   XIL_SetupGenerate(xil_remote_address);
   XIL_SetNormalizeDirectory(normalize_directory);
 
-  if (annotation_file)
-    XIL_ReadAnnotationFile(annotation_file);
-
   // compute the width of pointers on this target.
   addr_space_t as = ADDR_SPACE_GENERIC;
   enum machine_mode mode = targetm.addr_space.pointer_mode (as);
@@ -566,216 +495,41 @@ void gcc_plugin_start_unit(void *gcc_data, void *user_data)
   xil_pointer_width = TREE_SMALL_CONSTANT(size);
 }
 
-// handler to pick up the attribute indicating the name of the annotation
-// whose CFG is being generated. we can't pass this at the command line as
-// the name may include characters the gcc argument parser doesn't like.
-tree annotation_name_handler(tree *node, tree name, tree args,
-                             int flags, bool *no_add_attrs)
-{
-  gcc_assert(TREE_CODE(args) == TREE_LIST);
-  tree value = TREE_VALUE(args);
-  gcc_assert(TREE_CODE(value) == STRING_CST);
-
-  annotation_name = TREE_STRING_POINTER(value);
-  return NULL;
-}
-
-static struct attribute_spec annotation_name_attribute = {
-  .name = "annot_name",
-  .min_length = 1,
-  .max_length = 1,
-  .decl_required = 0,
-  .type_required = 0,
-  .function_type_required = 0,
-#if GCC_VERSION_NUMBER < 80000
-  .handler = annotation_name_handler,
-  .affects_type_identity = 0,
-#else
-  .affects_type_identity = 0,
-  .handler = annotation_name_handler,
-#endif
-};
-
-// handler to pick up the tree for the 'this' CSU type.
-tree annotation_this_handler(tree *node, tree name, tree args,
-                             int flags, bool *no_add_attrs)
-{
-  gcc_assert(!xil_annotation_this);
-  xil_annotation_this = *node;
-  return NULL;
-}
-
-static struct attribute_spec annotation_this_attribute = {
-  .name = "annot_this",
-  .min_length = 0,
-  .max_length = 0,
-  .decl_required = 0,
-  .type_required = 0,
-  .function_type_required = 0,
-#if GCC_VERSION_NUMBER < 80000
-  .handler = annotation_this_handler,
-  .affects_type_identity = 0,
-#else
-  .affects_type_identity = 0,
-  .handler = annotation_this_handler,
-#endif
-};
-
-static struct attribute_spec annotation_this_var_attribute = {
-  .name = "annot_this_var",
-  .min_length = 1,
-  .max_length = 1,
-  .decl_required = 0,
-  .type_required = 0,
-  .function_type_required = 0,
-#if GCC_VERSION_NUMBER < 80000
-  .handler = NULL,
-  .affects_type_identity = 0,
-#else
-  .affects_type_identity = 0,
-  .handler = NULL,
-#endif
-};
-
-// attribute attached to global functions/variables, indicating the full name.
-static struct attribute_spec annotation_global_attribute = {
-  .name = "annot_global",
-  .min_length = 1,
-  .max_length = 1,
-  .decl_required = 0,
-  .type_required = 0,
-  .function_type_required = 0,
-#if GCC_VERSION_NUMBER < 80000
-  .handler = NULL,
-  .affects_type_identity = 0,
-#else
-  .affects_type_identity = 0,
-  .handler = NULL,
-#endif
-};
-
-// attribute attached to parameters, indicating the parameter index.
-static struct attribute_spec annotation_param_attribute = {
-  .name = "annot_param",
-  .min_length = 1,
-  .max_length = 1,
-  .decl_required = 0,
-  .type_required = 0,
-  .function_type_required = 0,
-#if GCC_VERSION_NUMBER < 80000
-  .handler = NULL,
-  .affects_type_identity = 0,
-#else
-  .affects_type_identity = 0,
-  .handler = NULL,
-#endif
-};
-
-// attribute attached to return variables.
-static struct attribute_spec annotation_return_attribute = {
-  .name = "annot_return",
-  .min_length = 0,
-  .max_length = 0,
-  .decl_required = 0,
-  .type_required = 0,
-  .function_type_required = 0,
-#if GCC_VERSION_NUMBER < 80000
-  .handler = NULL,
-  .affects_type_identity = 0,
-#else
-  .affects_type_identity = 0,
-  .handler = NULL,
-#endif
-};
-
-// attribute attached to local variables, indicating the actual name
-// (which is the same as the declared name except in case of duplicates).
-static struct attribute_spec annotation_local_attribute = {
-  .name = "annot_local",
-  .min_length = 1,
-  .max_length = 1,
-  .decl_required = 0,
-  .type_required = 0,
-  .function_type_required = 0,
-#if GCC_VERSION_NUMBER < 80000
-  .handler = NULL,
-  .affects_type_identity = 0,
-#else
-  .affects_type_identity = 0,
-  .handler = NULL,
-#endif
-};
-
-// optional attribute attached to any of the above variables,
-// indicating the source name of the variable.
-static struct attribute_spec annotation_source_attribute = {
-  .name = "annot_source",
-  .min_length = 1,
-  .max_length = 1,
-  .decl_required = 0,
-  .type_required = 0,
-  .function_type_required = 0,
-#if GCC_VERSION_NUMBER < 80000
-  .handler = NULL,
-  .affects_type_identity = 0,
-#else
-  .affects_type_identity = 0,
-  .handler = NULL,
-#endif
-};
-
 void gcc_plugin_attributes(void *gcc_data, void *user_data)
 {
+  // Register the 'annotate' attribute so GCC doesn't warn about it being
+  // unrecognized. We process annotate attributes on types to record them
+  // in the composite CSU database.
 #if GCC_VERSION_NUMBER < 80000
-# define XIL_MAKE_ATTR(NAME, STR, _)                    \
-  static struct attribute_spec NAME ## _attribute = {   \
-    .name = STR,                                        \
-    .min_length = 1,                                    \
-    .max_length = 1,                                    \
-    .decl_required = 0,                                 \
-    .type_required = 0,                                 \
-    .function_type_required = 0,                        \
-    .handler = NULL,                                    \
-    .affects_type_identity = 0,                         \
-  };                                                    \
-  register_attribute(&(NAME ## _attribute));
+  static struct attribute_spec annotate_attribute = {
+    .name = "annotate",
+    .min_length = 1,
+    .max_length = 1,
+    .decl_required = 0,
+    .type_required = 0,
+    .function_type_required = 0,
+    .handler = NULL,
+    .affects_type_identity = 0,
+  };
 #else
-# define XIL_MAKE_ATTR(NAME, STR, _)                    \
-  static struct attribute_spec NAME ## _attribute = {   \
-    .name = STR,                                        \
-    .min_length = 1,                                    \
-    .max_length = 1,                                    \
-    .decl_required = 0,                                 \
-    .type_required = 0,                                 \
-    .function_type_required = 0,                        \
-    .affects_type_identity = 0,                         \
-    .handler = NULL,                                    \
-  };                                                    \
-  register_attribute(&(NAME ## _attribute));
+  static struct attribute_spec annotate_attribute = {
+    .name = "annotate",
+    .min_length = 1,
+    .max_length = 1,
+    .decl_required = 0,
+    .type_required = 0,
+    .function_type_required = 0,
+    .affects_type_identity = 0,
+    .handler = NULL,
+  };
 #endif
-
-  XIL_ITERATE_ANNOT(XIL_MAKE_ATTR)
-#undef XIL_MAKE_ATTR
-
-  // attributes used in the files emitted during annotation processing.
-  register_attribute(&annotation_name_attribute);
-  register_attribute(&annotation_this_attribute);
-  register_attribute(&annotation_this_var_attribute);
-  register_attribute(&annotation_global_attribute);
-  register_attribute(&annotation_param_attribute);
-  register_attribute(&annotation_return_attribute);
-  register_attribute(&annotation_local_attribute);
-  register_attribute(&annotation_source_attribute);
+  register_attribute(&annotate_attribute);
 
   // Also allow the syntax [[moz::annotate("...")]], which is (1) spec'ed as
   // being ignored if unrecognized, (2) more flexible in where it may be
   // placed, (3) defined by the c++ standard, and therefore (4) usable in the
   // same way across gcc and clang, and independent of preprocessor directives.
-  static struct attribute_spec Attrs[] = {
-#define MAKE_NS_ATTR(NAME, _2, _3) NAME##_attribute,
-    XIL_ITERATE_ANNOT(MAKE_NS_ATTR)
-#undef MAKE_NS_ATTR
-    NULL };
+  static struct attribute_spec Attrs[] = { annotate_attribute, NULL };
   register_scoped_attributes(Attrs, "moz");
 }
 
@@ -813,16 +567,7 @@ void gcc_plugin_pre_genericize(void *gcc_data, void *user_data)
   if (*skip_info)
     return;
 
-  // New-style annotations require the function to be processed before the
-  // annotations.
-  if (!xil_has_annotation)
-    XIL_GenerateBlock(decl);
-
-  // Using traditional-style annotations that generate temporary files and call
-  // a subcompiler on them. These need the annotations to exist at the time of
-  // XIL_GenerateBlock.
-  if (xil_has_annotation)
-      XIL_GenerateBlock(decl);
+  XIL_GenerateBlock(decl);
 
   // future parameter declarations will be for a different function.
   xil_pending_param_decls = NULL;
@@ -874,10 +619,6 @@ void gcc_plugin_finish_decl(void *gcc_data, void *user_data)
   if (!is_global && !is_function)
     return;
 
-  // only processing the output function for annotations.
-  if (xil_has_annotation)
-    return;
-
   XIL_Var var = XIL_TranslateVar(decl);
   const char *name = XIL_GetVarName(var);
 
@@ -915,29 +656,6 @@ void gcc_plugin_finish_decl(void *gcc_data, void *user_data)
         DECL_TEMPLATE_INFO(context) != NULL)
       return;
     context = DECL_CONTEXT(context);
-  }
-
-  // this is a function or global, process any annotation attributes.
-  tree attr = DECL_ATTRIBUTES(decl);
-  while (attr) {
-    XIL_ProcessAnnotationAttr(decl, attr, NULL, NULL);
-    attr = TREE_CHAIN(attr);
-  }
-
-  // also look for annotations read in from file.
-  for (ind = 0; ind < XIL_GetAnnotationCount(name, !is_function, false); ind++) {
-    const char *where;
-    const char *point_text, *annot_text;
-    int trusted;
-    XIL_GetAnnotation(name, !is_function, false, ind, &where,
-                      &point_text, &annot_text, &trusted);
-
-    // we'll handle loop invariants and point assertions after seeing the
-    // function's definition.
-    if (!strncmp(where, "loop", 4) || point_text)
-      continue;
-
-    XIL_ProcessAnnotationRead(decl, where, point_text, annot_text, trusted);
   }
 
   XIL_GenerateBlock(decl);
@@ -1041,42 +759,11 @@ int plugin_init(struct plugin_name_args *plugin_info,
       else
         printf("WARNING: xgill argument 'basedir' requires value\n");
     }
-    else if (!strcmp(arg_key,"annfile")) {
-      if (arg_value)
-        annotation_file = arg_value;
-      else
-        printf("WARNING: xgill argument 'annfile' requires value\n");
-    }
-    else if (!strcmp(arg_key,"annsingle")) {
-      if (arg_value)
-        xil_annotation_single = arg_value;
-      else
-        printf("WARNING: xgill argument 'annsingle' requires value\n");
-      XIL_ForceAnnotationWrites();
-    }
     else if (!strcmp(arg_key,"mangle")) {
       if (arg_value)
         xil_prefix_with_mangled = arg_value && arg_value[0] != '0';
       else
         printf("WARNING: xgill argument 'mangle' requires value\n");
-    }
-    else if (!strcmp(arg_key,"annot")) {
-      if (arg_value) {
-        // the annot argument should have the format class:kind
-        char *new_arg = xstrdup(arg_value);
-        annotation_class = new_arg;
-
-        char *colon = strchr(new_arg, ':');
-        if (colon) {
-          *colon = 0;
-          annotation_kind = colon + 1;
-        }
-
-        xil_has_annotation = true;
-      }
-      else {
-        printf("WARNING: xgill argument 'annot' requires value\n");
-      }
     }
     else {
       printf("WARNING: xgill unrecognized argument %s\n", arg_key);

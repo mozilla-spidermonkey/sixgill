@@ -31,10 +31,6 @@ void ClearBlockCaches()
   BlockCFGCache.Clear();
   InitializerCache.Clear();
   CompositeCSUCache.Clear();
-
-  BodyAnnotCache.Clear();
-  InitAnnotCache.Clear();
-  CompAnnotCache.Clear();
 }
 
 // maximum capacities for the storage caches.
@@ -42,7 +38,6 @@ void ClearBlockCaches()
 #define CAP_BLOCK_CFG    50000
 #define CAP_INITIALIZER  25000
 #define CAP_CSU          50000
-#define CAP_ANNOTATION   100000
 
 /////////////////////////////////////////////////////////////////////
 // BlockCFG lookup
@@ -100,35 +95,6 @@ BlockCFG* GetBlockCFG(BlockId *id)
   }
 
   return cfg;
-}
-
-BlockCFG* GetAnnotationCFG(BlockId *id)
-{
-  Cache_Annotation *cache = NULL;
-
-  switch (id->Kind()) {
-  case B_AnnotationFunc: cache = &BodyAnnotCache; break;
-  case B_AnnotationInit: cache = &InitAnnotCache; break;
-  case B_AnnotationComp: cache = &CompAnnotCache; break;
-  default: Assert(false);
-  }
-
-  Vector<BlockCFG*> *annot_list = cache->Lookup(id->Function());
-
-  BlockCFG *annot_cfg = NULL;
-  for (size_t aind = 0; annot_list && aind < annot_list->Size(); aind++) {
-    BlockCFG *test_cfg = annot_list->At(aind);
-    if (test_cfg->GetId() == id) {
-      annot_cfg = test_cfg;
-      break;
-    }
-  }
-
-  cache->Release(id->Function());
-
-  if (!annot_cfg)
-    logout << "ERROR: Could not find annotation CFG: " << id << endl;
-  return annot_cfg;
 }
 
 void BlockCFGCacheAddListWithRefs(const Vector<BlockCFG*> &cfgs)
@@ -210,52 +176,5 @@ class ExternalLookup_CompositeCSU : public Cache_CompositeCSU::ExternalLookup
 
 ExternalLookup_CompositeCSU lookup_CompositeCSU;
 Cache_CompositeCSU CompositeCSUCache(&lookup_CompositeCSU, CAP_CSU);
-
-/////////////////////////////////////////////////////////////////////
-// Annotation lookup
-/////////////////////////////////////////////////////////////////////
-
-class ExternalLookup_Annotation : public Cache_Annotation::ExternalLookup
-{
-public:
-  const char *m_db_name;
-  ExternalLookup_Annotation(const char *_db_name) : m_db_name(_db_name) {}
-
-  void LookupInsert(Cache_Annotation *cache, String *name)
-  {
-    // use a separate scratch buffer for annotation CFG lookups.
-    // reading information about bounds can cause a lookup on the block
-    // or initializer CFGs.
-    static Buffer annot_buf;
-
-    if (!DoLookupTransaction(m_db_name, name->Value(), &annot_buf)) {
-      cache->Insert(name, NULL);
-      return;
-    }
-
-    Vector<BlockCFG*> *cfg_list = new Vector<BlockCFG*>();
-
-    Buffer read_buf(annot_buf.base, annot_buf.pos - annot_buf.base);
-    BlockCFG::ReadList(&read_buf, cfg_list);
-    cache->Insert(name, cfg_list);
-
-    annot_buf.Reset();
-  }
-
-  void Remove(Cache_Annotation *cache,
-              String *name, Vector<BlockCFG*> *cfg_list)
-  {
-    if (cfg_list)
-      delete cfg_list;
-  }
-};
-
-ExternalLookup_Annotation lookup_BodyAnnot(BODY_ANNOT_DATABASE);
-ExternalLookup_Annotation lookup_InitAnnot(INIT_ANNOT_DATABASE);
-ExternalLookup_Annotation lookup_CompAnnot(COMP_ANNOT_DATABASE);
-
-Cache_Annotation BodyAnnotCache(&lookup_BodyAnnot, CAP_ANNOTATION);
-Cache_Annotation InitAnnotCache(&lookup_InitAnnot, CAP_ANNOTATION);
-Cache_Annotation CompAnnotCache(&lookup_CompAnnot, CAP_ANNOTATION);
 
 NAMESPACE_XGILL_END

@@ -47,11 +47,6 @@ static Xdb *g_fingerprint_xdb = NULL;
 static Xdb *g_source_xdb = NULL;
 static Xdb *g_preproc_xdb = NULL;
 
-// databases for storing annotations. these databases do not necessarily exist.
-static Xdb *g_annot_body_xdb = NULL;
-static Xdb *g_annot_init_xdb = NULL;
-static Xdb *g_annot_comp_xdb = NULL;
-
 // whether we've written out any function bodies, initializers or types.
 static bool g_have_body = false;
 
@@ -92,51 +87,6 @@ static HashTable<String*,VersionId,String> g_body_version;
 // for incremental builds.
 static Vector<String*> g_file_changed;
 
-// information about all the annotations associated with some block,
-// including those stored or removed from databases.
-struct KeyAnnotationInfo
-{
-  // name of the function/global/type this specifies annotations for.
-  String *key;
-
-  // CFGs which are currently in the database for the key. these are clones,
-  // unless there was an intermediate annotation flush in which case these
-  // may be a mix of clones and non-clones.
-  Vector<BlockCFG*> database_cfgs;
-
-  // CFGs which were removed from the database. these are all clones.
-  // if we are doing an incremental build, old annotations are removed
-  // and will end up erased unless they are readded.
-  Vector<BlockCFG*> removed_cfgs;
-
-  // CFGs to write out. these are not clones, and may overlap with
-  // database_cfgs or removed_cfgs.
-  Vector<BlockCFG*> write_cfgs;
-
-  KeyAnnotationInfo(String *_key) : key(_key) {}
-
-  void Mark() const {
-    key->Mark();
-
-    for (size_t ind = 0; ind < database_cfgs.Size(); ind++)
-      database_cfgs[ind]->Mark();
-
-    for (size_t ind = 0; ind < removed_cfgs.Size(); ind++)
-      removed_cfgs[ind]->Mark();
-
-    for (size_t ind = 0; ind < write_cfgs.Size(); ind++)
-      write_cfgs[ind]->Mark();
-  }
-};
-
-// information about annotations for all blocks queried or written at some
-// point. blocks not in these hashes have not had their annotations read
-// or modified.
-typedef HashTable<String*,KeyAnnotationInfo*,String> AnnotationHash;
-static AnnotationHash g_annot_body;
-static AnnotationHash g_annot_init;
-static AnnotationHash g_annot_comp;
-
 // open the block databases if they are not already open.
 void LoadDatabases()
 {
@@ -153,10 +103,6 @@ void LoadDatabases()
 
   g_source_xdb  = GetDatabase(SOURCE_DATABASE,  CreateMode::Create);
   g_preproc_xdb = GetDatabase(PREPROC_DATABASE, CreateMode::Create);
-
-  g_annot_body_xdb = GetDatabase(BODY_ANNOT_DATABASE, CreateMode::DontCreate);
-  g_annot_init_xdb = GetDatabase(INIT_ANNOT_DATABASE, CreateMode::DontCreate);
-  g_annot_comp_xdb = GetDatabase(COMP_ANNOT_DATABASE, CreateMode::DontCreate);
 
   // we are doing an incremental analysis if there is an existing worklist.
   if (access(WORKLIST_FILE, F_OK) == 0)
@@ -179,136 +125,8 @@ void MarkRoots()
     g_body_file.ItKey()->Mark();
     g_body_file.ItValueSingle()->Mark();
   }
-  HashIterate(g_annot_body) {
-      g_annot_body.ItKey()->Mark();
-      g_annot_body.ItValueSingle()->Mark();
-  }
-  HashIterate(g_annot_init) {
-    g_annot_init.ItKey()->Mark();
-    g_annot_init.ItValueSingle()->Mark();
-  }
-  HashIterate(g_annot_comp) {
-    g_annot_comp.ItKey()->Mark();
-    g_annot_comp.ItValueSingle()->Mark();
-  }
 }
 
-
-// get the annotation info for key within hash, filling it in from xdb
-// if necessary.
-KeyAnnotationInfo* GetAnnotations(Xdb *xdb, AnnotationHash &hash, String *key)
-{
-  Vector<KeyAnnotationInfo*> *entries = hash.Lookup(key, true);
-  if (!entries->Empty())
-    return entries->At(0);
-
-  KeyAnnotationInfo *info = new KeyAnnotationInfo(key);
-
-  static Buffer scratch_buf;
-
-  if (xdb->Exists() && XdbFindUncompressed(xdb, key, &scratch_buf)) {
-    Buffer read_buf(scratch_buf.base, scratch_buf.pos - scratch_buf.base);
-    BlockCFG::ReadList(&read_buf, &info->database_cfgs, true);
-    scratch_buf.Reset();
-  }
-
-  entries->PushBack(info);
-  return info;
-}
-
-// remove any annotations associate with key for hash/xdb.
-void RemoveAnnotations(Xdb *xdb, AnnotationHash &hash, String *key)
-{
-  Assert(g_have_body);
-
-  if (!g_incremental) {
-    // only remove annotations when doing an incremental build.
-    // otherwise we can spuriously remove annotations if there is no manager.
-    return;
-  }
-
-  KeyAnnotationInfo *info = GetAnnotations(xdb, hash, key);
-
-  if (!info->database_cfgs.Empty()) {
-    // clear the annotation CFGs from the database itself.
-    static Buffer empty_buf;
-    XdbReplaceCompress(xdb, key, &empty_buf);
-
-    // move the CFGs into the removed list.
-    for (size_t ind = 0; ind < info->database_cfgs.Size(); ind++)
-      info->removed_cfgs.PushBack(info->database_cfgs[ind]);
-    info->database_cfgs.Clear();
-  }
-}
-
-// write out any annotations for info to one of the annotation databases.
-// if there are new annotations, mark any affected functions for reanalysis.
-// updates info to reflect the new state of the annotations.
-void WriteAnnotations(Xdb *xdb, KeyAnnotationInfo *info)
-{
-  if (info->write_cfgs.Empty())
-    return;
-
-  // make sure the database exists.
-  if (!xdb->Exists())
-    xdb->Create();
-
-  // make the list we will actually write out. this includes the write CFGs
-  // from the info and any existing CFGs in the database which the write
-  // CFGs do not duplicate.
-  Vector<BlockCFG*> write_list;
-
-  for (size_t ind = 0; ind < info->write_cfgs.Size(); ind++)
-    write_list.PushBack(info->write_cfgs[ind]);
-
-  for (size_t ind = 0; ind < info->database_cfgs.Size(); ) {
-    BlockCFG *cfg = info->database_cfgs[ind];
-
-    // skip old annotations which have a new version to write out.
-    // update the database list to reflect the change.
-    bool duplicate = false;
-    for (size_t wind = 0; wind < info->write_cfgs.Size(); wind++) {
-      if (cfg->GetId()->Loop() == info->write_cfgs[wind]->GetId()->Loop())
-        duplicate = true;
-    }
-
-    if (duplicate) {
-      info->database_cfgs[ind] = info->database_cfgs.Back();
-      info->database_cfgs.PopBack();
-    }
-    else {
-      write_list.PushBack(cfg);
-      ind++;
-    }
-  }
-
-  // write out the annotation CFGs.
-  static Buffer scratch_buf;
-  BlockCFG::WriteList(&scratch_buf, write_list);
-  XdbReplaceCompress(xdb, info->key, &scratch_buf);
-  scratch_buf.Reset();
-
-  // update the lists to reflect the new state.
-
-  info->removed_cfgs.Clear();
-
-  for (size_t ind = 0; ind < info->write_cfgs.Size(); ind++)
-    info->database_cfgs.PushBack(info->write_cfgs[ind]);
-  info->write_cfgs.Clear();
-}
-
-// write all pending annotations to databases.
-void FlushAnnotations()
-{
-  HashIterate(g_annot_body)
-    WriteAnnotations(g_annot_body_xdb, g_annot_body.ItValueSingle());
-
-  HashIterate(g_annot_init)
-    WriteAnnotations(g_annot_init_xdb, g_annot_init.ItValueSingle());
-
-  HashIterate(g_annot_comp)
-    WriteAnnotations(g_annot_comp_xdb, g_annot_comp.ItValueSingle());
-}
 
 /////////////////////////////////////////////////////////////////////
 //
@@ -550,11 +368,6 @@ static Vector<String*> g_overflow_worklist;
 // write out all block backend data to disk.
 void FinishBlockBackend()
 {
-  // write out any annotations we found.
-  // so need to be done before the worklist is generated.
-
-  FlushAnnotations();
-
   // write any worklist information.
 
   if (g_have_body) {
@@ -563,17 +376,6 @@ void FinishBlockBackend()
     else
       WriteWorklistInitial();
   }
-
-  // drop references on annotations.
-
-  HashIterate(g_annot_body)
-    delete g_annot_body.ItValueSingle();
-
-  HashIterate(g_annot_init)
-    delete g_annot_init.ItValueSingle();
-
-  HashIterate(g_annot_comp)
-    delete g_annot_comp.ItValueSingle();
 
   // drop references on worklist data.
 
@@ -586,88 +388,6 @@ void FinishBlockBackend()
 /////////////////////////////////////////////////////////////////////
 // Backend implementations
 /////////////////////////////////////////////////////////////////////
-
-bool BlockQueryAnnot(Transaction *t, const Vector<TOperand*> &arguments,
-                     TOperand **result)
-{
-  BACKEND_ARG_COUNT(4);
-  BACKEND_ARG_STRING(0, db_name, db_length);
-  BACKEND_ARG_STRING(1, var_name, var_length);
-  BACKEND_ARG_STRING(2, annot_name, annot_length);
-  BACKEND_ARG_BOOLEAN(3, check_db);
-
-  LoadDatabases();
-
-  String *new_var_name = String::Make((const char*) var_name);
-
-  KeyAnnotationInfo *info = NULL;
-
-  if (!strcmp((const char*) db_name, BODY_ANNOT_DATABASE))
-    info = GetAnnotations(g_annot_body_xdb, g_annot_body, new_var_name);
-  else if (!strcmp((const char*) db_name, INIT_ANNOT_DATABASE))
-    info = GetAnnotations(g_annot_init_xdb, g_annot_init, new_var_name);
-  else if (!strcmp((const char*) db_name, COMP_ANNOT_DATABASE))
-    info = GetAnnotations(g_annot_comp_xdb, g_annot_comp, new_var_name);
-  else
-    Assert(false);
-
-  bool found = false;
-
-  // check the CFGs that we've gotten a BlockWriteAnnot for.
-  for (size_t ind = 0; ind < info->write_cfgs.Size(); ind++) {
-    const char *cur_name = info->write_cfgs[ind]->GetId()->Loop()->Value();
-    if (!strcmp((const char*) annot_name, cur_name))
-      found = true;
-  }
-
-  // optionally check the CFGs that are already in the database.
-  for (size_t ind = 0; check_db &&  ind < info->database_cfgs.Size(); ind++) {
-    const char *cur_name = info->database_cfgs[ind]->GetId()->Loop()->Value();
-    if (!strcmp((const char*) annot_name, cur_name))
-      found = true;
-  }
-
-  *result = new TOperandBoolean(t, found);
-  return true;
-}
-
-bool BlockWriteAnnot(Transaction *t, const Vector<TOperand*> &arguments,
-                     TOperand **result)
-{
-  BACKEND_ARG_COUNT(1);
-  Assert(arguments[0]->Kind() == TO_String);
-  TOperandString *list = (TOperandString*) arguments[0];
-
-  LoadDatabases();
-
-  static Buffer data_buf;
-  TOperandString::Uncompress(list, &data_buf);
-  Buffer read_buf(data_buf.base, data_buf.pos - data_buf.base);
-
-  BlockCFG *annot_cfg = BlockCFG::Read(&read_buf);
-  BlockId *id = annot_cfg->GetId();
-  String *var_name = id->Function();
-  data_buf.Reset();
-
-  KeyAnnotationInfo *info = NULL;
-
-  if (id->Kind() == B_AnnotationFunc)
-    info = GetAnnotations(g_annot_body_xdb, g_annot_body, var_name);
-  else if (id->Kind() == B_AnnotationInit)
-    info = GetAnnotations(g_annot_init_xdb, g_annot_init, var_name);
-  else if (id->Kind() == B_AnnotationComp)
-    info = GetAnnotations(g_annot_comp_xdb, g_annot_comp, var_name);
-  else
-    Assert(false);
-
-  // watch out for duplicate writes. this will only show up if there
-  // are multiple workers trying to add this annotation, and we got
-  // QUERYA;QUERYB;WRITEA;WRITEB sequence.
-  if (!info->write_cfgs.Contains(annot_cfg))
-    info->write_cfgs.PushBack(annot_cfg);
-
-  return true;
-}
 
 bool BlockQueryList(Transaction *t, const Vector<TOperand*> &arguments,
                     TOperand **result)
@@ -768,7 +488,6 @@ bool BlockWriteList(Transaction *t, const Vector<TOperand*> &arguments,
 
       Assert(g_comp_xdb);
       XdbReplaceCompress(g_comp_xdb, name, &write_buf);
-      RemoveAnnotations(g_annot_comp_xdb, g_annot_comp, name);
 
       write_buf.Reset();
       break;
@@ -860,7 +579,6 @@ bool BlockWriteList(Transaction *t, const Vector<TOperand*> &arguments,
 
         Assert(g_body_xdb);
         XdbReplaceCompress(g_body_xdb, name, &write_buf);
-        RemoveAnnotations(g_annot_body_xdb, g_annot_body, name);
 
         // remember the file this function was defined in.
         String *file = function_cfgs.Back()->GetBeginLocation()->FileName();
@@ -871,7 +589,6 @@ bool BlockWriteList(Transaction *t, const Vector<TOperand*> &arguments,
 
         Assert(g_init_xdb);
         XdbReplaceCompress(g_init_xdb, name, &write_buf);
-        RemoveAnnotations(g_annot_init_xdb, g_annot_init, name);
       }
       else {
         Assert(false);
@@ -887,14 +604,6 @@ bool BlockWriteList(Transaction *t, const Vector<TOperand*> &arguments,
   }
 
   data_buf.Reset();
-  return true;
-}
-
-bool BlockFlushAnnotations(Transaction *t, const Vector<TOperand*> &arguments,
-                           TOperand **result)
-{
-  BACKEND_ARG_COUNT(0);
-  FlushAnnotations();
   return true;
 }
 
@@ -1128,11 +837,8 @@ BACKEND_IMPL_END
 
 static void start_Block()
 {
-  BACKEND_REGISTER(BlockQueryAnnot);
-  BACKEND_REGISTER(BlockWriteAnnot);
   BACKEND_REGISTER(BlockQueryList);
   BACKEND_REGISTER(BlockWriteList);
-  BACKEND_REGISTER(BlockFlushAnnotations);
   BACKEND_REGISTER(BlockQueryFile);
   BACKEND_REGISTER(BlockWriteFile);
   BACKEND_REGISTER(BlockLoadWorklist);
@@ -1166,31 +872,6 @@ TAction* BlockWriteList(Transaction *t, TOperand *write_data)
 {
   BACKEND_CALL(BlockWriteList, 0);
   call->PushArgument(write_data);
-  return call;
-}
-
-TAction* BlockQueryAnnot(Transaction *t, const char *db_name,
-                         const char *var_name, const char *annot_name,
-                         bool check_db, size_t var_result)
-{
-  BACKEND_CALL(BlockQueryAnnot, var_result);
-  call->PushArgument(new TOperandString(t, db_name));
-  call->PushArgument(new TOperandString(t, var_name));
-  call->PushArgument(new TOperandString(t, annot_name));
-  call->PushArgument(new TOperandBoolean(t, check_db));
-  return call;
-}
-
-TAction* BlockWriteAnnot(Transaction *t, TOperand *annot_data)
-{
-  BACKEND_CALL(BlockWriteAnnot, 0);
-  call->PushArgument(annot_data);
-  return call;
-}
-
-TAction* BlockFlushAnnotations(Transaction *t)
-{
-  BACKEND_CALL(BlockFlushAnnotations, 0);
   return call;
 }
 

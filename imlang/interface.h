@@ -63,9 +63,6 @@ XIL_Location XIL_MakeLocation(const char *file, int line);
 // levels at which we can associate pointers. these differ over the points
 // at which they are cleared.
 typedef enum {
-  // associations cleared after each annotation.
-  XIL_AscAnnotate,
-
   // associations cleared after each block.
   XIL_AscBlock,
 
@@ -80,59 +77,11 @@ void** XIL_Associate(XIL_AssociateKind table, const char *kind, void *value);
 void XIL_ClearAssociate(XIL_AssociateKind table);
 
 /////////////////////////////////////////////////////////////////////
-// Annotations
-/////////////////////////////////////////////////////////////////////
-
-#define XIL_ITERATE_ANNOT(MACRO)                                \
-    /* preconditions holding at entry to a function. */         \
-  MACRO(Precondition, "precondition", 1)                        \
-  MACRO(PreconditionAssume, "precondition_assume", 2)           \
-    /* postconditions holding at exit from a function. */       \
-  MACRO(Postcondition, "postcondition", 3)                      \
-  MACRO(PostconditionAssume, "postcondition_assume", 4)         \
-    /* invariants holding for a type or global. */              \
-  MACRO(Invariant, "invariant", 5)                              \
-  MACRO(InvariantAssume, "invariant_assume", 6)                 \
-    /* conditions holding at specific points in a function. */  \
-  MACRO(Assert, "assert_static", 7)                             \
-  MACRO(Assume, "assume_static", 8)                             \
-  MACRO(AssertRuntime, "assert_static_runtime", 9)              \
-  MACRO(Annotate, "annotate", 10)
-
-enum _enum_XIL_AnnotationKind {
-#define XIL_FILL_ANNOT(NAME, _, VALUE)  XIL_AK_ ## NAME = VALUE,
-  XIL_ITERATE_ANNOT(XIL_FILL_ANNOT)
-#undef XIL_FILL_ANNOT
-};
-typedef enum _enum_XIL_AnnotationKind XIL_AnnotationKind;
-
-// read a file of annotations generated from the web interface.
-void XIL_ReadAnnotationFile(const char *file);
-
-// get the number of read annotations associated with a func/global/type.
-int XIL_GetAnnotationCount(const char *name, bool global, bool type);
-
-// get one of the read annotations associated with var.
-void XIL_GetAnnotation(const char *name, bool global, bool type, int index,
-                       const char **pwhere,
-                       const char **ppoint_text, const char **pannot_text,
-                       int *ptrusted);
-
-// ensure that any generated annotations are forced to disk after processing
-// is done. only write out CFGs affected by read annotations (annotations
-// which indicate loop invariant or other assertions within the CFG).
-void XIL_ForceAnnotationWrites();
-
-/////////////////////////////////////////////////////////////////////
 // Active block
 /////////////////////////////////////////////////////////////////////
 
 // set/clear the global variable or function we are generating a CFG for.
-// if annot is specified then we are making an annotation CFG for var.
-// annot_type indicates this is a type invariant (var is a global variable
-// with the name of the type).
-void XIL_SetActiveBlock(XIL_Var var, const char *annot_name,
-                        XIL_AnnotationKind annot_kind, int annot_type);
+void XIL_SetActiveBlock(XIL_Var var);
 void XIL_ClearActiveBlock(int drop);
 
 /////////////////////////////////////////////////////////////////////
@@ -204,12 +153,11 @@ const char * XIL_MaybeDecorateFunction(const char *name, XIL_Type type);
 XIL_Var XIL_VarGlob(const char *name, const char *source_name);
 XIL_Var XIL_VarFunc(const char *name, const char *source_name);
 
-// make local variables whose context is either the active block or the
-// function being annotated.
-XIL_Var XIL_VarArg(int index, const char *name, int annot);
-XIL_Var XIL_VarLocal(const char *name, const char *source_name, int annot);
-XIL_Var XIL_VarReturn(int annot);
-XIL_Var XIL_VarThis(int annot);
+// make local variables for the active block.
+XIL_Var XIL_VarArg(int index, const char *name);
+XIL_Var XIL_VarLocal(const char *name, const char *source_name);
+XIL_Var XIL_VarReturn();
+XIL_Var XIL_VarThis();
 
 // make temporaries for the active block.
 XIL_Var XIL_VarTemp(const char *name);
@@ -350,8 +298,6 @@ void XIL_CFGEdgeCall(XIL_PPoint source, XIL_PPoint target, XIL_Type func_type,
                      XIL_Exp return_assign, XIL_Exp instance, XIL_Exp func,
                      XIL_Exp *args, int arg_count);
 void XIL_CFGEdgeAssembly(XIL_PPoint source, XIL_PPoint target);
-void XIL_CFGEdgeAnnotation(XIL_PPoint source, XIL_PPoint target,
-                           const char *annot_name);
 
 /////////////////////////////////////////////////////////////////////
 // Databases
@@ -365,14 +311,6 @@ void XIL_PrintGenerated();
 
 // write to the databases all CSUs and CFGs that have been generated.
 void XIL_WriteGenerated();
-
-// whether an annotation with the specified name has already been processed.
-int XIL_HasAnnotation(XIL_Var var, const char *annot_name, int annot_type);
-
-// write an annotation CFG indicating a processing error.
-void XIL_AddAnnotationMsg(XIL_Var var, const char *annot_name,
-                          XIL_AnnotationKind annot_kind, int annot_type,
-                          XIL_Location loc, const char *annot_message);
 
 #ifdef __cplusplus
 } // extern "C"

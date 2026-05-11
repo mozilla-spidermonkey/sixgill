@@ -106,15 +106,6 @@ static BlockCFG *g_active_cfg = NULL;
 // ID to use for locals in g_active_cfg.
 static BlockId *g_active_id = NULL;
 
-// ID to use for locals in the function g_active_cfg is an annotation for.
-static BlockId *g_annotation_id = NULL;
-
-// whether we have seen any annotation CFGs.
-static bool g_has_annotation = false;
-
-// whether to force writes of annotations.
-static bool g_force_annotation_writes = false;
-
 struct AssociateKey {
   String *kind;
   void *value;
@@ -135,14 +126,12 @@ struct AssociateKey {
 typedef HashTable<AssociateKey,void*,AssociateKey> AssociateTable;
 
 // association hashtables.
-static AssociateTable g_associate_annot;
 static AssociateTable g_associate_block;
 static AssociateTable g_associate_global;
 
 static AssociateTable& GetAssociateTable(XIL_AssociateKind kind)
 {
   switch (kind) {
-  case XIL_AscAnnotate: return g_associate_annot;
   case XIL_AscBlock:    return g_associate_block;
   case XIL_AscGlobal:   return g_associate_global;
   default: Assert(false);
@@ -168,176 +157,10 @@ extern "C" void XIL_ClearAssociate(XIL_AssociateKind table)
 }
 
 /////////////////////////////////////////////////////////////////////
-// Annotations
-/////////////////////////////////////////////////////////////////////
-
-// information about an annotation read in via the web interface.
-struct ReadAnnotationInfo
-{
-  // where to attach the annotation: 'pre', 'post' or a loop.
-  String *where;
-
-  // for point assertions, text of the point where the annotation should
-  // be attached.
-  String *point_text;
-
-  // text of the annotation.
-  String *annot_text;
-
-  // whether the annotation is trusted.
-  bool trusted;
-
-  ReadAnnotationInfo()
-  {
-    memset(this, 0, sizeof(*this));
-  }
-
-  ReadAnnotationInfo(String *_where,
-                     String *_point_text, String *_annot_text, bool _trusted)
-    : where(_where),
-      point_text(_point_text), annot_text(_annot_text), trusted(_trusted)
-  {}
-};
-
-// read annotations indexed by the function/global/type name.
-typedef HashTable<String*,ReadAnnotationInfo,String> ReadAnnotationTable;
-static ReadAnnotationTable g_read_annotation_func;
-static ReadAnnotationTable g_read_annotation_glob;
-static ReadAnnotationTable g_read_annotation_comp;
-
-extern "C" void XIL_ReadAnnotationFile(const char *file)
-{
-  // annotation files are lists of blank-separated entries of the form:
-  //
-  // hook (per Where::PrintHook. may be prepended with "point '...'").
-  // text
-  // trusted
-
-  FileInStream in(file);
-
-  Buffer file_buf;
-  ReadInStream(in, &file_buf);
-
-  Vector<char*> strings;
-  SplitBufferStrings(&file_buf, '\n', &strings);
-
-  size_t ind = 0;
-  while (ind + 3 <= strings.Size()) {
-    char *hook = strings[ind++];
-    if (*hook == 0) continue;
-
-    char *annot_text = strings[ind++];
-    if (*annot_text == 0) continue;
-
-    char *trusted = strings[ind++];
-    if (*trusted == 0) continue;
-
-    String *new_annot_text = String::Make(annot_text);
-    bool new_trusted = (strcmp(trusted, "true") == 0);
-
-    // insert entries for the function(s) in the hook.
-    while (true) {
-      // check if the hook is prepended with "point 'point_text'"
-      String *point_text = NULL;
-      if (!strncmp(hook, "point \'", 7)) {
-        char *end_point = strchr(hook + 7, '\'');
-        Assert(end_point);
-        *end_point = 0;
-
-        // unescape any HTML in the point text.
-        char *text = HtmlUnescape(hook + 7);
-
-        // remove any trailing semicolon in the point text.
-        size_t len = strlen(text);
-        if (len > 0 && text[len - 1] == ';')
-          text[len - 1] = 0;
-
-        point_text = String::Make(text);
-        hook = end_point + 2;
-      }
-
-      char *space = strchr(hook, ' ');
-      if (!space) break;
-      *space = 0;
-
-      char *next = strchr(space + 1, '$');
-      if (next)
-        *next = 0;
-
-      String *where = String::Make(hook);
-      String *key = String::Make(space + 1);
-
-      ReadAnnotationInfo info(where, point_text, new_annot_text, new_trusted);
-
-      if (!strcmp(hook, "global"))
-        g_read_annotation_glob.Insert(key, info);
-      else if (!strcmp(hook, "type"))
-        g_read_annotation_comp.Insert(key, info);
-      else
-        g_read_annotation_func.Insert(key, info);
-
-      if (next) {
-        hook = next + 1;
-        continue;
-      }
-      break;
-    }
-  }
-}
-
-extern "C" int XIL_GetAnnotationCount(const char *name, bool global, bool type)
-{
-  String *new_name = String::Make(name);
-
-  Vector<ReadAnnotationInfo> *entries;
-  if (global)
-    entries = g_read_annotation_glob.Lookup(new_name);
-  else if (type)
-    entries = g_read_annotation_comp.Lookup(new_name);
-  else
-    entries = g_read_annotation_func.Lookup(new_name);
-
-  if (entries)
-    return entries->Size();
-  return 0;
-}
-
-extern "C" void XIL_GetAnnotation(const char *name, bool global, bool type,
-                                  int index, const char **pwhere,
-                                  const char **ppoint_text,
-                                  const char **pannot_text,
-                                  int *ptrusted)
-{
-  String *new_name = String::Make(name);
-
-  Vector<ReadAnnotationInfo> *entries;
-  if (global)
-    entries = g_read_annotation_glob.Lookup(new_name);
-  else if (type)
-    entries = g_read_annotation_comp.Lookup(new_name);
-  else
-    entries = g_read_annotation_func.Lookup(new_name);
-  Assert(entries);
-
-  const ReadAnnotationInfo &info = entries->At(index);
-  *pwhere = info.where->Value();
-  *ppoint_text = info.point_text ? info.point_text->Value() : NULL;
-  *pannot_text = info.annot_text->Value();
-  *ptrusted = info.trusted;
-}
-
-extern "C" void XIL_ForceAnnotationWrites()
-{
-  g_force_annotation_writes = true;
-}
-
-/////////////////////////////////////////////////////////////////////
 // Active block
 /////////////////////////////////////////////////////////////////////
 
-extern "C" void XIL_SetActiveBlock(XIL_Var var, const char *annot_name,
-                                   XIL_AnnotationKind annot_kind,
-                                   int annot_type)
+extern "C" void XIL_SetActiveBlock(XIL_Var var)
 {
   Assert(!g_active_cfg);
 
@@ -347,25 +170,7 @@ extern "C" void XIL_SetActiveBlock(XIL_Var var, const char *annot_name,
   // the initial whole CFG and not the final loop-free CFG.
   BlockId *cfg_id = NULL;
 
-  if (annot_name) {
-    g_has_annotation = true;
-    String *new_name = String::Make(annot_name);
-
-    if (annot_type) {
-      Assert(new_var->Kind() == VK_Glob);
-      cfg_id = BlockId::Make(B_AnnotationComp, new_var, new_name);
-    }
-    else if (new_var->Kind() == VK_Func) {
-      cfg_id = BlockId::Make(B_AnnotationFunc, new_var, new_name);
-      g_annotation_id = BlockId::Make(B_Function, new_var);
-    }
-    else if (new_var->Kind() == VK_Glob) {
-      cfg_id = BlockId::Make(B_AnnotationInit, new_var, new_name);
-    }
-
-    g_active_id = cfg_id;
-  }
-  else if (new_var->Kind() == VK_Func) {
+  if (new_var->Kind() == VK_Func) {
     cfg_id = BlockId::Make(B_FunctionWhole, new_var);
     g_active_id = BlockId::Make(B_Function, new_var);
   }
@@ -378,9 +183,6 @@ extern "C" void XIL_SetActiveBlock(XIL_Var var, const char *annot_name,
   }
 
   g_active_cfg = BlockCFG::Make(cfg_id);
-
-  if (annot_kind)
-    g_active_cfg->SetAnnotationKind((AnnotationKind) annot_kind);
 
   if (!g_keep_cfgs.Contains(g_active_cfg))
     g_keep_cfgs.PushBack(g_active_cfg);
@@ -399,7 +201,6 @@ extern "C" void XIL_ClearActiveBlock(int drop)
 
   g_active_cfg = NULL;
   g_active_id = NULL;
-  g_annotation_id = NULL;
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -738,44 +539,39 @@ extern "C" XIL_Var XIL_VarFunc(const char *name, const char *source_name)
     Variable::Make(NULL, VK_Func, new_name, 0, new_source_name);
 }
 
-extern "C" XIL_Var XIL_VarArg(int index, const char *name, int annot)
+extern "C" XIL_Var XIL_VarArg(int index, const char *name)
 {
-  BlockId *id = annot ? g_annotation_id : g_active_id;
-  Assert(id);
+  Assert(g_active_id);
 
   String *new_name = name ? String::Make(name) : NULL;
 
   return (XIL_Var)
-    Variable::Make(id, VK_Arg, new_name, (size_t) index, new_name);
+    Variable::Make(g_active_id, VK_Arg, new_name, (size_t) index, new_name);
 }
 
-extern "C" XIL_Var XIL_VarLocal(const char *name,
-                                const char *source_name, int annot)
+extern "C" XIL_Var XIL_VarLocal(const char *name, const char *source_name)
 {
-  BlockId *id = annot ? g_annotation_id : g_active_id;
-  Assert(id);
+  Assert(g_active_id);
 
   String *new_name = String::Make(name);
   String *new_source_name = source_name ? String::Make(source_name) : NULL;
 
   return (XIL_Var)
-    Variable::Make(id, VK_Local, new_name, 0, new_source_name);
+    Variable::Make(g_active_id, VK_Local, new_name, 0, new_source_name);
 }
 
-extern "C" XIL_Var XIL_VarReturn(int annot)
+extern "C" XIL_Var XIL_VarReturn()
 {
-  BlockId *id = annot ? g_annotation_id : g_active_id;
-  Assert(id);
+  Assert(g_active_id);
 
-  return (XIL_Var) Variable::Make(id, VK_Return, NULL, 0, NULL);
+  return (XIL_Var) Variable::Make(g_active_id, VK_Return, NULL, 0, NULL);
 }
 
-extern "C" XIL_Var XIL_VarThis(int annot)
+extern "C" XIL_Var XIL_VarThis()
 {
-  BlockId *id = annot ? g_annotation_id : g_active_id;
-  Assert(id);
+  Assert(g_active_id);
 
-  return (XIL_Var) Variable::Make(id, VK_This, NULL, 0, NULL);
+  return (XIL_Var) Variable::Make(g_active_id, VK_This, NULL, 0, NULL);
 }
 
 extern "C" XIL_Var XIL_VarTemp(const char *name)
@@ -1125,23 +921,6 @@ void XIL_CFGEdgeAssembly(XIL_PPoint source, XIL_PPoint target)
   g_active_cfg->AddEdge(edge);
 }
 
-extern "C"
-void XIL_CFGEdgeAnnotation(XIL_PPoint source, XIL_PPoint target,
-                           const char *annot_name)
-{
-  Assert(g_active_cfg);
-  if (!source) return;
-
-  Variable *func_var = g_active_id->BaseVar();
-  Assert(func_var->Kind() == VK_Func);
-
-  String *new_name = String::Make(annot_name);
-  BlockId *annot = BlockId::Make(B_AnnotationFunc, func_var, new_name);
-
-  PEdge *edge = PEdge::MakeAnnotation((PPoint) source, (PPoint) target, annot);
-  g_active_cfg->AddEdge(edge);
-}
-
 /////////////////////////////////////////////////////////////////////
 // Databases
 /////////////////////////////////////////////////////////////////////
@@ -1269,213 +1048,6 @@ static void ProcessWriteList(Transaction *t)
   g_data_buf.Reset();
 }
 
-// modify the specified list of CFGs with any point annotations for
-// the function they represent. return true if any CFGs changed as a result.
-bool AddPointAnnotations(const Vector<BlockCFG*> &split_cfgs)
-{
-  Variable *function = split_cfgs[0]->GetId()->BaseVar();
-
-  Vector<ReadAnnotationInfo> *entries =
-    g_read_annotation_func.Lookup(function->GetName());
-  if (!entries) return false;
-
-  bool changed = false;
-
-  for (size_t ind = 0; ind < entries->Size(); ind++) {
-    const ReadAnnotationInfo &info = entries->At(ind);
-
-    // point annotations can come from loop invariants or point assertions.
-    // skip other annotations.
-    if (!info.point_text && strncmp(info.where->Value(), "loop", 4))
-      continue;
-
-    AnnotationKind kind = info.trusted ? AK_Assume : AK_Assert;
-
-    // compute the name of the annotation. this must align with the names
-    // generated when the annotation CFG was constructed.
-    Buffer name_buf;
-    BufferOutStream out(&name_buf);
-    out << AnnotationKindString(kind)
-        << ":(" << info.annot_text->Value() << ")";
-
-    String *annot_name = String::Make(out.Base());
-    BlockId *annot = BlockId::Make(B_AnnotationFunc, function, annot_name);
-
-    if (info.point_text) {
-      // add point annotations wherever an edge's text matches the
-      // point text, anywhere in the function.
-      Buffer text_buf;
-      BufferOutStream text_out(&text_buf);
-
-      // add the CFGs to the block cache so PrintUI can query them.
-      BlockCFGCacheAddListWithRefs(split_cfgs);
-
-      for (size_t cind = 0; cind < split_cfgs.Size(); cind++) {
-        BlockCFG *cfg = split_cfgs[cind];
-
-        for (size_t eind = 0; eind < cfg->GetEdgeCount(); eind++) {
-          PEdge *edge = cfg->GetEdge(eind);
-
-          edge->PrintUI(text_out);
-
-          if (!strcmp(text_out.Base(), info.point_text->Value())) {
-            cfg->AddPointAnnotation(edge->GetSource(), annot);
-            changed = true;
-          }
-          text_buf.Reset();
-        }
-      }
-    }
-    else {
-      // add point annotations for this loop invariant at entry to the loop,
-      // and immediately after every summary edge for the loop.
-      for (size_t cind = 0; cind < split_cfgs.Size(); cind++) {
-        BlockCFG *cfg = split_cfgs[cind];
-
-        if (cfg->GetId()->WriteLoop() == info.where) {
-          cfg->AddPointAnnotation(cfg->GetEntryPoint(), annot);
-          changed = true;
-        }
-
-        for (size_t eind = 0; eind < cfg->GetEdgeCount(); eind++) {
-          PEdgeLoop *edge = cfg->GetEdge(eind)->IfLoop();
-
-          if (edge && edge->GetLoopId()->WriteLoop() == info.where) {
-            cfg->AddPointAnnotation(edge->GetTarget(), annot);
-            changed = true;
-          }
-        }
-      }
-    }
-  }
-
-  return changed;
-}
-
-// do the writing if we are processing an annotation CFG.
-static void WriteProcessedAnnotation()
-{
-  // if we are making an annotation CFG there should be only one CFG
-  // and no CSUs.
-  Assert(g_keep_csus.Empty());
-  Assert(g_keep_cfgs.Size() <= 1);
-
-  if (g_keep_cfgs.Empty() || !g_drop_cfgs.Empty()) {
-    // dropped the annotation CFG, don't do anything.
-    return;
-  }
-
-  BlockCFG *cfg = g_keep_cfgs[0];
-
-  // do loop splitting (well, check for loops and eliminate skips).
-  Vector<BlockCFG*> split_cfgs;
-  SplitLoops(cfg, &split_cfgs);
-
-  // if there were actually loops, only look at the non-loop CFG.
-  // this will be the last entry in the split list.
-  BlockCFG *base_cfg = split_cfgs.Back();
-
-  String *name = base_cfg->GetId()->Loop();
-  Assert(name);
-
-  // list of CFGs to write out. this is usually just the one we just got,
-  // but in the case of global invariants will include CFGs with identical
-  // bodies for every global mentioned in the annotation.
-  Vector<BlockCFG*> write_list;
-  write_list.PushBack(base_cfg);
-
-  if (base_cfg->GetId()->Kind() == B_AnnotationInit) {
-    Vector<Exp*> lval_list;
-    LvalListVisitor visitor(&lval_list);
-    for (size_t eind = 0; eind < base_cfg->GetEdgeCount(); eind++)
-      base_cfg->GetEdge(eind)->DoVisit(&visitor);
-
-    // clone the CFG for all global variables we find in the annotation.
-    // TODO: this doesn't account for cases where globals are mentioned
-    // in functions called by the annotation.
-    for (size_t lind = 0; lind < lval_list.Size(); lind++) {
-      Variable *root = lval_list[lind]->Root();
-      if (root && root->Kind() == VK_Glob) {
-        // check if there is already an annotation CFG for this variable.
-        bool have_cfg = false;
-        for (size_t ind = 0; ind < write_list.Size(); ind++) {
-          if (root == write_list[ind]->GetId()->BaseVar())
-            have_cfg = true;
-        }
-
-        if (!have_cfg) {
-          // clone the base CFG for the new variable.
-          BlockId *new_id = BlockId::Make(B_AnnotationInit, root, name);
-          BlockCFG *new_cfg = BlockCFG::Make(new_id);
-          new_cfg->SetAnnotationKind(base_cfg->GetAnnotationKind());
-          CopyCFGLocationsVariables(base_cfg, new_cfg);
-          CopyCFGPointsEdges(base_cfg, new_cfg);
-          write_list.PushBack(new_cfg);
-        }
-      }
-    }
-  }
-
-  // write out all the CFGs we generated.
-  Transaction *t = new Transaction();
-
-  for (size_t ind = 0; ind < write_list.Size(); ind++) {
-    BlockCFG::Write(&g_data_buf, write_list[ind]);
-
-    TOperand *data = TOperandString::Compress(t, &g_data_buf);
-    g_data_buf.Reset();
-
-    t->PushAction(Backend::BlockWriteAnnot(t, data));
-  }
-
-  SubmitTransaction(t);
-  delete t;
-}
-
-// do the writing if we are forcing writes of all annotations.
-static void WriteForceAnnotations()
-{
-  Transaction *t = new Transaction();
-
-  // scan for CFGs that need point annotations, and write these out.
-  // do these writes by directly updating the body database, bypassing
-  // the block backend. this will keep the backend from erasing any annotations
-  // associated with the CFGs.
-
-  for (size_t ind = 0; ind < g_keep_cfgs.Size(); ind++) {
-    BlockCFG *cfg = g_keep_cfgs[ind];
-    Assert(cfg->GetCommand());
-
-    if (g_drop_cfgs.Contains(cfg))
-      continue;
-
-    // do loop splitting.
-    Vector<BlockCFG*> split_cfgs;
-    SplitLoops(cfg, &split_cfgs);
-
-    if (!AddPointAnnotations(split_cfgs)) {
-      // did not add any point annotations to the CFG.
-      continue;
-    }
-
-    TOperandString *key_data =
-      new TOperandString(t, cfg->GetId()->Function()->Value());
-
-    static Buffer scratch_buf;
-    for (size_t cind = 0; cind < split_cfgs.Size(); cind++)
-      BlockCFG::Write(&scratch_buf, split_cfgs[cind]);
-    TOperandString *body_data = TOperandString::Compress(t, &scratch_buf);
-    scratch_buf.Reset();
-
-    t->PushAction(Backend::XdbReplace(t, BODY_DATABASE, key_data, body_data));
-  }
-
-  // flush any added annotations to the databases.
-  t->PushAction(Backend::BlockFlushAnnotations(t));
-  SubmitTransaction(t);
-  delete t;
-}
-
 // fill in on_cycle such that on_cycle[p] is true iff point p lies on some
 // cycle of cfg, i.e. p has a self edge or is in a strongly connected
 // component with more than one point. Iterative Tarjan's algorithm.
@@ -1568,18 +1140,6 @@ static void ComputeCyclePoints(BlockCFG *cfg, Vector<bool> *on_cycle)
 
 extern "C" void XIL_WriteGenerated()
 {
-  if (g_has_annotation) {
-    WriteProcessedAnnotation();
-    AnalysisCleanup();
-    return;
-  }
-
-  if (g_force_annotation_writes) {
-    WriteForceAnnotations();
-    AnalysisCleanup();
-    return;
-  }
-
   // do the writing if we are doing a regular build.
 
   Transaction *t = new Transaction();
@@ -1661,7 +1221,6 @@ extern "C" void XIL_WriteGenerated()
     }
 
     SplitLoops(cfg, &split_cfgs);
-    AddPointAnnotations(split_cfgs);
 
     Assert(split_cfgs.Size());
     WriteUInt32(&g_data_buf, split_cfgs.Size());
@@ -1682,104 +1241,4 @@ extern "C" void XIL_WriteGenerated()
   AnalysisCleanup();
 }
 
-extern "C"
-int XIL_HasAnnotation(XIL_Var var, const char *annot_name, int annot_type)
-{
-  GET_OBJECT(Variable, var);
-  const char *var_name = new_var->GetName()->Value();
 
-  const char *db_name = NULL;
-  if (annot_type)
-    db_name = COMP_ANNOT_DATABASE;
-  else if (new_var->Kind() == VK_Func)
-    db_name = BODY_ANNOT_DATABASE;
-  else if (new_var->Kind() == VK_Glob)
-    db_name = INIT_ANNOT_DATABASE;
-  else
-    Assert(false);
-
-  Transaction *t = new Transaction();
-  size_t result = t->MakeVariable(true);
-
-  // if we are forcing writes of annotations then check the databases
-  // for existing annotations so that we don't keep regenerating the
-  // annotations after flushing them. the write forces should only happen
-  // if we are processing annotations from the web interface, in which case
-  // there can't be any change in the generated program CFGs which affect
-  // the meaning of an annotation (e.g. inserted/deleted arguments).
-
-  t->PushAction(
-    Backend::BlockQueryAnnot(t, db_name, var_name, annot_name,
-                             g_force_annotation_writes, result));
-  SubmitTransaction(t);
-
-  TOperandBoolean *data = t->LookupBoolean(result);
-  int has_data = data->IsTrue();
-
-  delete t;
-  return has_data;
-}
-
-extern "C"
-void XIL_AddAnnotationMsg(XIL_Var var, const char *annot_name,
-                          XIL_AnnotationKind annot_kind, int annot_type,
-                          XIL_Location loc, const char *annot_message)
-{
-  GET_OBJECT(Variable, var);
-  GET_OBJECT(Location, loc);
-  Assert(!g_has_annotation);
-
-  BlockId *cfg_id = NULL;
-  String *new_name = String::Make(annot_name);
-
-  if (annot_type) {
-    Assert(new_var->Kind() == VK_Glob);
-    cfg_id = BlockId::Make(B_AnnotationComp, new_var, new_name);
-  }
-  else if (new_var->Kind() == VK_Func) {
-    cfg_id = BlockId::Make(B_AnnotationFunc, new_var, new_name);
-  }
-  else if (new_var->Kind() == VK_Glob) {
-    cfg_id = BlockId::Make(B_AnnotationInit, new_var, new_name);
-  }
-
-  BlockCFG *cfg = BlockCFG::Make(cfg_id);
-  cfg->SetAnnotationKind((AnnotationKind) annot_kind);
-
- // make a single local variable '__error__'.
-  String *error_name = String::Make("__error__");
-  Variable *error_var = Variable::Make(cfg_id, VK_Local, error_name, 0, NULL);
-
-  cfg->AddVariable(error_var, Type::MakeError());
-
-  cfg->SetBeginLocation(new_loc);
-  cfg->SetEndLocation(new_loc);
-
-  PPoint entry_point = cfg->AddPoint(new_loc);
-  PPoint exit_point = cfg->AddPoint(new_loc);
-
-  cfg->SetEntryPoint(entry_point);
-  cfg->SetExitPoint(exit_point);
-
-  Exp *error_exp = Exp::MakeVar(error_var);
-
-  String *new_message = String::Make(annot_message);
-  Exp *message_exp = Exp::MakeString(new_message);
-
-  PEdge *edge = PEdge::MakeAssign(entry_point, exit_point, Type::MakeError(),
-                                  error_exp, message_exp);
-  cfg->AddEdge(edge);
-
-  Transaction *t = new Transaction();
-
-  Assert(g_data_buf.pos == g_data_buf.base);
-  BlockCFG::Write(&g_data_buf, cfg);
-
-  TOperand *data = TOperandString::Compress(t, &g_data_buf);
-  g_data_buf.Reset();
-
-  t->PushAction(Backend::BlockWriteAnnot(t, data));
-
-  SubmitTransaction(t);
-  delete t;
-}

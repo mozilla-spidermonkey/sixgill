@@ -51,10 +51,15 @@ int main(int argc, const char **argv)
   if (xf.HasError()) {
     return 1;  // XdbFile has already logged the error.
   }
+  if (!xf.Exists()) {
+    fprintf(logfile, "ERROR: no database file %s\n", file);
+    return 1;
+  }
   Xdb *xdb = xf.Table(table);
 
   if (!xdb->Exists()) {
-    return 0;
+    fprintf(logfile, "ERROR: no table %s in %s\n", table, file);
+    return 1;
   }
 
   if (print_stats.IsSpecified()) {

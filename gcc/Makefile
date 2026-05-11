@@ -18,7 +18,7 @@
 
 include ../config.mk
 
-XGILL_OBJS= xgill.o type.o variable.o tree.o annot.o missing.o
+XGILL_OBJS= xgill.o type.o variable.o tree.o missing.o
 
 all: xgill.so
 

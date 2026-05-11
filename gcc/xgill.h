@@ -60,8 +60,6 @@ EXTERN_BEGIN
 #include <cp/cp-tree.h>
 #include <vec.h>
 
-#include <cpplib.h>
-
 # ifdef HAVE_PRINT_TREE_H
 #  include <print-tree.h>
 # endif
@@ -140,9 +138,6 @@ class method_iterator {
 // stream used to print all log data (warnings, errors, diagnostics).
 extern FILE *xil_log;
 
-// directory containing the log file, NULL for no log file.
-extern const char *xil_log_directory;
-
 // IP address of database manager, NULL for no manager.
 extern const char *xil_remote_address;
 
@@ -154,16 +149,6 @@ extern const char *xil_plugin_path;
 
 // gcc binary and command line arguments used to invoke the plugin.
 extern const char *xil_command;
-
-// if an error is encountered during annotation processing, name of the
-// file to write information about that error.
-extern const char *xil_annotation_single;
-
-// whether our input file is generating an annotation CFG.
-extern bool xil_has_annotation;
-
-// if the annotation CFG is a type invariant, the 'this' type.
-extern tree xil_annotation_this;
 
 // common width used by all constructed pointer types. we check this against
 // the pointer types we get from GCC.
@@ -379,10 +364,16 @@ void XIL_ResolveGoto(XIL_PPoint source, XIL_PPoint target,
                      struct XIL_ScopeEnv *source_scope,
                      struct XIL_ScopeEnv *target_scope);
 
-struct XIL_PendingAnnotation
-{
+// pending annotation attribute on a type, accumulated during GenerateBlock
+// to be attached to the function type when it is created.
+struct XIL_PendingAnnotation {
+  // type the annotation is attached to (e.g. the function type of a decl).
   tree type;
+
+  // the attribute tree node.
   tree attr;
+
+  // next in list.
   struct XIL_PendingAnnotation *next;
 };
 
@@ -399,11 +390,11 @@ struct XIL_BlockEnv
   // whether we have dropped this CFG due to encountering an unexpected tree.
   int dropped;
 
+  // pending annotation attributes to attach to function types.
+  struct XIL_PendingAnnotation *annots;
+
   // number of temporaries generated for the CFG.
   int temp_count;
-
-  // number of annotations generated for the CFG.
-  int annot_count;
 
   // entry/exit points of the CFG.
   XIL_PPoint entry_point;
@@ -414,9 +405,6 @@ struct XIL_BlockEnv
 
   // all local variables in the CFG.
   struct XIL_LocalData *locals;
-
-  // pending annotations discovered in the CFG.
-  struct XIL_PendingAnnotation *annots;
 };
 
 // the active block environment.
@@ -681,17 +669,5 @@ const char* XIL_TreeIntString(tree node);
 // get the name of an attribute and any text or integer value it has.
 const char* XIL_DecodeAttribute(tree attr,
                                 const char **text_value, int *int_value);
-
-// if attribute indicates an annotation, consume it and add it to the backend
-// databases. attribute is attached to node (either the active function
-// or the active type). return value indicates whether this is actually
-// an annotation attribute.
-bool XIL_ProcessAnnotationAttr(tree node, tree attr, XIL_PPoint *point,
-                               XIL_Location loc);
-
-// consume an annotation read from an annotation file.
-void XIL_ProcessAnnotationRead(tree node, const char *where,
-                               const char *point_text, const char *annot_text,
-                               bool trusted);
 
 #endif // XIL_MAIN

@@ -96,7 +96,6 @@ static void FillTagNames()
   ADD_TAG(PPoint);
   ADD_TAG(LoopHead);
   ADD_TAG(LoopIsomorphic);
-  ADD_TAG(PointAnnotation);
   ADD_TAG(PEdge);
   ADD_TAG(PEdgeAssumeNonZero);
   ADD_TAG(PEdgeCallArguments);
