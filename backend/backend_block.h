@@ -44,21 +44,6 @@ TAction* BlockQueryList(Transaction *t, TOperand *query_data,
 // these will be merged with any previous data.
 TAction* BlockWriteList(Transaction *t, TOperand *write_data);
 
-// return whether an annotation CFG has already been processed: there has been
-// a previous BlockWriteAnnot for the CFG or, if check_db is specified,
-// there is already a CFG in the database.
-TAction* BlockQueryAnnot(Transaction *t, const char *db_name,
-                         const char *var_name, const char *annot_name,
-                         bool check_db, size_t var_result);
-
-// write an annotation CFG stored in annot_data. these CFGs are kept in caches
-// until a BlockFlushAnnotations.
-TAction* BlockWriteAnnot(Transaction *t, TOperand *annot_data);
-
-// flush all written annotation CFGs to the databases.
-// this is also performed when the backend finishes.
-TAction* BlockFlushAnnotations(Transaction *t);
-
 // file source functions.
 
 // return whether the source/preprocessed contents of a file have already

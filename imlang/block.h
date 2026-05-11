@@ -34,11 +34,7 @@ NAMESPACE_XGILL_BEGIN
   /* loop-free inner loop body, modelling a single iteration. */	\
   ITER(Loop, 2)								\
   /* static initializer of a global variable. */			\
-  ITER(Initializer, 3)							\
-  /* block computing the value of an annotation. */			\
-  ITER(AnnotationFunc, 4)						\
-  ITER(AnnotationInit, 5)						\
-  ITER(AnnotationComp, 6)
+  ITER(Initializer, 3)
 
 // different kinds of CFG blocks.
 enum BlockKind {
@@ -65,13 +61,6 @@ class BlockId : public HashObject
  public:
   // get the kind of identifier.
   BlockKind Kind() const { return m_kind; }
-
-  // whether this is an identifier for an annotation CFG.
-  bool IsAnnotation() const {
-    return m_kind == B_AnnotationFunc ||
-           m_kind == B_AnnotationInit ||
-           m_kind == B_AnnotationComp;
-  }
 
   // get the var/loop of this block. loop is non-NULL only
   // for NULL for B_Loop blocks.
@@ -178,29 +167,6 @@ inline OutStream& operator << (OutStream &out, const BlockPPoint &bp)
   return out;
 }
 
-// the different kinds of annotations.
-enum AnnotationKind {
-  AK_Invalid = 0,
-
-#define XIL_FILL_ANNOT(NAME, _, VALUE)  AK_ ## NAME = VALUE,
-  XIL_ITERATE_ANNOT(XIL_FILL_ANNOT)
-#undef XIL_FILL_ANNOT
-
-};
-
-// get the string representation of an annotation kind.
-inline const char* AnnotationKindString(AnnotationKind kind)
-{
-  switch (kind) {
-
-#define XIL_PRINT_ANNOT(NAME, STR, _)  case AK_ ## NAME: return STR; break;
-  XIL_ITERATE_ANNOT(XIL_PRINT_ANNOT)
-#undef XIL_PRINT_ANNOT
-
-  default: Assert(false);
-  }
-}
-
 class PEdge;
 
 // information about a variable defined by a CFG.
@@ -229,22 +195,6 @@ struct LoopHead
   LoopHead() : point(0), end_location(NULL) {}
   LoopHead(PPoint _point, Location *_end_location)
     : point(_point), end_location(_end_location) {}
-};
-
-// information about a point annotation in a CFG. in contrast to annotations
-// on edges, which came from assertions in the source code, these come from
-// the web interface and can be inserted without changing the CFG's structure.
-struct PointAnnotation
-{
-  // point where this annotation occurs at.
-  PPoint point;
-
-  // ID of the annotation CFG.
-  BlockId *annot;
-
-  PointAnnotation() : point(0), annot(NULL) {}
-  PointAnnotation(PPoint _point, BlockId *_annot)
-    : point(_point), annot(_annot) {}
 };
 
 // a control flow graph - points and edges with distinguished entry/exit
@@ -377,33 +327,10 @@ class BlockCFG : public HashObject
     return m_edges->At(ind);
   }
 
-  // get the point annotations in this block.
-  size_t GetPointAnnotationCount() const {
-    return m_point_annotations ? m_point_annotations->Size() : 0;
-  }
-  const PointAnnotation& GetPointAnnotation(size_t ind) const {
-    Assert(m_point_annotations);
-    return m_point_annotations->At(ind);
-  }
-
   // return whether this CFG is equivalent to cfg. these CFGs should be for
   // the same function or loop, and either this or cfg will have a clone ID.
   // two CFGs are equivalent if they are identical except for location info.
   bool IsEquivalent(BlockCFG *cfg) const;
-
-  // annotation CFG methods.
-
-  // if this is an annotation CFG, get/set the kind of annotation.
-  AnnotationKind GetAnnotationKind() const { return m_annotation_kind; }
-  void SetAnnotationKind(AnnotationKind kind);
-
-  // get/set the actual computed bit for this annotation. SetBit can be NULL
-  // if the annotation is broken and there was an error while processing it.
-  Bit* GetAnnotationBit() const { return m_annotation_bit; }
-  void SetAnnotationBit(Bit *bit);
-
-  // whether the bit has been computed for this annotation CFG.
-  bool IsAnnotationBitComputed() const { return m_annotation_computed; }
 
   // modification methods.
 
@@ -454,9 +381,6 @@ class BlockCFG : public HashObject
   // replace an existing edge at the specified index with a new edge.
   // consumes a reference on edge.
   void SetEdge(size_t eind, PEdge *edge);
-
-  // add a point annotation to this CFG.
-  void AddPointAnnotation(PPoint point, BlockId *annot);
 
   // helper methods.
 
@@ -514,14 +438,6 @@ class BlockCFG : public HashObject
 
   // the edges in this CFG.
   Vector<PEdge*> *m_edges;
-
-  // the point annotations in this CFG.
-  Vector<PointAnnotation> *m_point_annotations;
-
-  // if this is an annotation CFG, the annotation kind and bit (if computed).
-  AnnotationKind m_annotation_kind;
-  bool m_annotation_computed;
-  Bit *m_annotation_bit;
 
   typedef HashTable< PPoint, PEdge*, DataHash<PPoint> > EdgeTable;
 

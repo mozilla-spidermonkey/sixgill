@@ -110,17 +110,28 @@ void XdbFile::begin_tx()
   }
 }
 
-XdbFile::XdbFile(const char *path, uint32_t flags)
+XdbFile::XdbFile(const char *path, uint32_t flags, const char *const *tables)
   : m_db(NULL), m_read_only(!!(flags & kReadOnly)),
-    m_error(false), m_in_tx(false), m_table_count(0)
+    m_error(false), m_in_tx(false),
+    m_declared_tables(tables != NULL), m_tables_created(false),
+    m_table_count(0)
 {
   m_path = new char[strlen(path) + 1];
   strcpy(m_path, path);
   memset(m_tables, 0, sizeof(m_tables));
 
-  open_db(!!(flags & kCreate));
+  for (; tables && *tables; tables++) {
+    Assert(m_table_count < kMaxTables);
+    m_tables[m_table_count++] = new Xdb(this, *tables);
+  }
+
+  bool create = !!(flags & kCreate);
+  open_db(create);
   if (Exists()) {
     setup_pragmas();
+    if (create) {
+      create_tables();
+    }
   }
 }
 
@@ -128,9 +139,11 @@ XdbFile::~XdbFile()
 {
   if (m_db) {
     Flush();
-    for (int i = 0; i < m_table_count; i++) {
-      delete m_tables[i];
-    }
+  }
+  for (int i = 0; i < m_table_count; i++) {
+    delete m_tables[i];
+  }
+  if (m_db) {
     // Statements are now finalized and any write tx committed, so the
     // connection is idle: fold the WAL in and produce a self-contained file.
     finalize_file();
@@ -142,13 +155,44 @@ XdbFile::~XdbFile()
 
 void XdbFile::Create()
 {
-  if (m_db) return;
-  open_db(true);
-  if (Exists()) {
-    setup_pragmas();
+  if (!m_db) {
+    open_db(true);
+    if (Exists()) {
+      setup_pragmas();
+    }
   }
-  // DDL for individual tables runs via Xdb::Create(); stmts are prepared
-  // lazily on first use.
+  // The file may have been opened earlier without kCreate, so create the
+  // tables even if it was already open. Statements are prepared lazily on
+  // first use.
+  if (Exists() && !m_tables_created) {
+    create_tables();
+  }
+}
+
+void XdbFile::create_tables()
+{
+  // Create every declared table in one transaction, so that a file never
+  // exists with only some of its tables.
+  begin_tx();
+  for (int i = 0; i < m_table_count && !m_error; i++) {
+    char *err = NULL;
+    int rc = sqlite3_exec(m_db, m_tables[i]->m_sql_schema, NULL, NULL, &err);
+    if (rc != SQLITE_OK) {
+      fprintf(logfile, "ERROR: XdbFile %s schema for %s: %s\n",
+              m_path, m_tables[i]->m_table, err ? err : sqlite3_errmsg(m_db));
+      sqlite3_free(err);
+      m_error = true;
+    }
+  }
+  if (m_error) {
+    if (m_in_tx) {
+      sqlite3_exec(m_db, "ROLLBACK", NULL, NULL, NULL);
+      m_in_tx = false;
+    }
+    return;
+  }
+  Flush();
+  m_tables_created = !m_error;
 }
 
 void XdbFile::Flush()
@@ -163,32 +207,21 @@ void XdbFile::Flush()
 
 void XdbFile::Recover()
 {
-  // Tables in use before must be recreated in the new file so that
-  // previously handed-out Xdb handles remain usable. A table with prepared
-  // statements is known to exist, since preparing fails on a missing table.
-  bool existed[kMaxTables] = {};
   if (m_db) {
     if (m_in_tx) {
       sqlite3_exec(m_db, "ROLLBACK", NULL, NULL, NULL);
     }
     for (int i = 0; i < m_table_count; i++) {
-      if (m_tables[i]) {
-        existed[i] = m_tables[i]->m_stmt_find != NULL;
-        m_tables[i]->finalize_stmts();
-      }
+      m_tables[i]->finalize_stmts();
     }
     sqlite3_close(m_db);
     m_db = NULL;
   }
   m_error  = false;
   m_in_tx  = false;
+  m_tables_created = false;
   unlink(m_path);
   Create();
-  for (int i = 0; i < m_table_count; i++) {
-    if (existed[i]) {
-      m_tables[i]->Create();
-    }
-  }
 }
 
 Xdb *XdbFile::Table(const char *table_name)
@@ -199,9 +232,14 @@ Xdb *XdbFile::Table(const char *table_name)
     }
   }
 
+  if (m_declared_tables) {
+    fprintf(logfile, "ERROR: XdbFile %s has no table %s\n", m_path, table_name);
+    Assert(!m_declared_tables);
+  }
+
   Assert(m_table_count < kMaxTables);
   Xdb *xdb = new Xdb(this, table_name);
-  // Statements are prepared lazily (on first use) or by Xdb::Create().
+  // Statements are prepared lazily on first use.
   m_tables[m_table_count] = xdb;
   m_table_count++;
   return xdb;
@@ -317,6 +355,10 @@ bool Xdb::Exists() const
   // that failed to open or is corrupt must not masquerade as empty.
   Assert(!m_file->m_error);
   if (!m_file->m_db) return false;
+
+  // Declared tables are all created along with the file.
+  if (m_file->m_declared_tables) return true;
+
   const char *sql =
     "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1";
   sqlite3_stmt *stmt = NULL;
@@ -332,31 +374,6 @@ bool Xdb::Exists() const
   sqlite3_finalize(stmt);
   Assert(!m_file->m_error);
   return found;
-}
-
-void Xdb::Create()
-{
-  if (!m_file->m_db) {
-    m_file->Create();
-  }
-  if (!m_file->Exists()) {
-    return;
-  }
-
-  char *err = NULL;
-
-  int rc = sqlite3_exec(m_file->m_db, m_sql_schema, NULL, NULL, &err);
-  if (rc != SQLITE_OK) {
-    fprintf(logfile, "ERROR: Xdb %s.%s schema: %s\n",
-            m_file->m_path, m_table, err ? err : sqlite3_errmsg(m_file->m_db));
-    sqlite3_free(err);
-    m_file->m_error = true;
-    return;
-  }
-
-  if (!m_stmt_find) {
-    prepare_stmts();
-  }
 }
 
 void Xdb::PrintStats()

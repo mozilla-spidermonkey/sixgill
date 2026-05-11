@@ -10,6 +10,9 @@ binary blob values (zlib deflate):
 CREATE TABLE <name> (name TEXT PRIMARY KEY, data BLOB NOT NULL) STRICT, WITHOUT ROWID;
 ```
 
+All of a file's tables are created together, in one transaction, when the file
+is created, so a table exists exactly when its file does.
+
 Keys are NUL-terminated strings. Values are compressed binary blobs (zlib
 deflate) except where noted. The binary data is in a custom "XDB" format that
 requires custom code (in this directory) to interpret. There are facilities for

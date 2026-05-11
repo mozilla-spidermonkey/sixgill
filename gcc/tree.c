@@ -114,14 +114,7 @@ void XIL_ProcessResult(struct XIL_TreeEnv *env, XIL_Exp result)
     else {
       // this should only show up for malformed initial() applications.
       // TODO: need a better way of logging these.
-      gcc_assert(xil_has_annotation);
-      XIL_Var error_var =
-        XIL_VarLocal("__initial_error", "__initial_error", false);
-
-      XIL_Type error_type = XIL_TypeError();
-      XIL_CFGAddVar(error_var, error_type, 0);
-
-      *env->result_lval = XIL_ExpVar(error_var);
+      gcc_assert(false);
     }
     return;
   }
@@ -269,43 +262,6 @@ void XIL_TranslateDeclaration(struct XIL_TreeEnv *env, tree node)
       TREE_UNEXPECTED_RESULT(env, node);
     XIL_TranslateTree(env, initial);
     return;
-  }
-
-  // if we're processing an annotation file, watch for variables which are
-  // fields of the type we are making an invariant for. these are only used
-  // for type invariants in C.
-  tree attr = DECL_ATTRIBUTES(node);
-  while (attr) {
-    int value;
-    const char *purpose = XIL_DecodeAttribute(attr, NULL, &value);
-    if (purpose && !strcmp(purpose, "annot_this_var")) {
-      XIL_Var this_var = XIL_VarThis(false);
-      XIL_Exp this_exp = XIL_ExpVar(this_var);
-      XIL_Exp this_drf = XIL_ExpDrf(this_exp);
-
-      // value is a flag. if nonzero then a field of the 'this' type,
-      // if zero then the 'this' type itself.
-      if (!value) {
-        XIL_ProcessResult(env, this_drf);
-        return;
-      }
-
-      const char *name = IDENTIFIER_POINTER(DECL_NAME(node));
-
-      gcc_assert(xil_annotation_this);
-      const char *csu_name = XIL_CSUName(xil_annotation_this, NULL);
-      gcc_assert(csu_name);
-
-      XIL_Type xil_type = XIL_TranslateType(TREE_TYPE(node));
-      XIL_Field field = XIL_MakeField(name, name, csu_name, xil_type, false, NULL);
-
-      XIL_Exp this_fld = XIL_ExpFld(this_drf, field);
-      XIL_Exp result = XIL_ExpDrf(this_fld);
-
-      XIL_ProcessResult(env, result);
-      return;
-    }
-    attr = TREE_CHAIN(attr);
   }
 
   XIL_Var var = XIL_TranslateVar(node);
@@ -872,20 +828,6 @@ void XIL_TranslateBinary(struct XIL_TreeEnv *env, tree node)
   XIL_ProcessResult(env, result);
 }
 
-static bool is_annotation_variable(const char *name)
-{
-  return !strcmp(name, "__initial") || !strcmp(name, "__gcsafe");
-}
-
-static XIL_Exp get_annotation_variable_value(const char *name, XIL_Exp base)
-{
-  if (!strcmp(name, "__initial"))
-    return XIL_ExpInitial(base);
-  if (!strcmp(name, "__gcsafe"))
-    return XIL_ExpGCSafe(base);
-  gcc_assert(false);
-}
-
 void XIL_TranslateStatement(struct XIL_TreeEnv *env, tree node)
 {
   XIL_Location loc = XIL_TryUpdateLocation(*env->point, node);
@@ -898,22 +840,6 @@ void XIL_TranslateStatement(struct XIL_TreeEnv *env, tree node)
     // skip 'using' declarations within a function.
     if (TREE_CODE(decl) == USING_DECL)
       return;
-
-    // skip declarations we see while processing annotation files,
-    // unless there is an explicit initializer.
-    if (xil_has_annotation && !DECL_INITIAL(decl))
-      return;
-
-    // if there is an annotation hanging off this decl then process it.
-    tree attr = DECL_ATTRIBUTES(decl);
-    while (attr) {
-      if (!*env->point)
-        *env->point = XIL_CFGAddPoint(loc);
-      if (XIL_ProcessAnnotationAttr(xil_active_env.decl, attr,
-                                    env->point, loc))
-        return;
-      attr = TREE_CHAIN(attr);
-    }
 
     XIL_Var var_decl = XIL_TranslateVar(decl);
     XIL_Exp exp_decl = XIL_ExpVar(var_decl);
@@ -974,25 +900,6 @@ void XIL_TranslateStatement(struct XIL_TreeEnv *env, tree node)
     tree value = DECL_INITIAL(decl);
     if (!value)
       return;
-
-    // check if this declaration annotates a special Initial or GCSafe expression.
-    if (xil_has_annotation && DECL_NAME(decl)) {
-      const char *name = IDENTIFIER_POINTER(DECL_NAME(decl));
-      if (is_annotation_variable(name)) {
-        XIL_Exp xil_value;
-        MAKE_ENV(initial_env, env->point, env->post_edges);
-        initial_env.result_lval = &xil_value;
-        XIL_TranslateTree(&initial_env, value);
-
-        XIL_PPoint after_point = XIL_CFGAddPoint(loc);
-        XIL_Exp value = get_annotation_variable_value(name, xil_value);
-        XIL_CFGEdgeAssign(*env->point, after_point,
-                          xil_type, exp_decl, value);
-
-        *env->point = after_point;
-        return;
-      }
-    }
 
     MAKE_ENV(initial_env, env->point, env->post_edges);
     initial_env.result_assign = exp_decl;
@@ -1475,64 +1382,6 @@ void XIL_TranslateStatement(struct XIL_TreeEnv *env, tree node)
   gcc_unreachable();
 }
 
-// if we are in an annotation and node is a call to a special annotation
-// function, generate the corresponding analysis expression for env
-// and return true.
-bool XIL_TranslateAnnotationCall(struct XIL_TreeEnv *env, tree node)
-{
-  // annotation calls can only appear in annotations.
-  if (!xil_has_annotation) return false;
-
-  tree function = TREE_OPERAND(node, 1);
-  if (TREE_CODE(function) != ADDR_EXPR) return false;
-
-  tree function_var = TREE_OPERAND(function, 0);
-  if (TREE_CODE(function_var) != FUNCTION_DECL) return false;
-
-  tree function_name = DECL_NAME(function_var);
-  if (!function_name || TREE_CODE(function_name) != IDENTIFIER_NODE)
-    return false;
-  const char *name = IDENTIFIER_POINTER(function_name);
-
-  if (!strcmp(name, "skip_inference")) {
-    XIL_Exp result = XIL_ExpSkipInference();
-    XIL_ProcessResult(env, result);
-    return true;
-  }
-
-  if (strcmp(name,"__ubound") && strcmp(name,"__lbound") &&
-      strcmp(name,"__zterm"))
-    return false;
-
-  // this is an annotation function call. get the argument being passed.
-  tree arg = TREE_OPERAND(node, 3);
-  if (!arg) return false;
-
-  XIL_Exp xil_arg = NULL;
-  MAKE_ENV(arg_env, env->point, NULL);
-  arg_env.result_rval = &xil_arg;
-  XIL_TranslateTree(&arg_env, arg);
-
-  // figure out the stride type to use for this bound.
-
-  tree type = TREE_TYPE(arg);
-  if (TREE_CODE(type) != POINTER_TYPE) return false;
-
-  XIL_Type stride_type = XIL_TranslateType(TREE_TYPE(type));
-
-  XIL_Exp result = NULL;
-  if (!strcmp(name,"__ubound"))
-    result = XIL_ExpUBound(xil_arg, stride_type);
-  else if (!strcmp(name,"__lbound"))
-    result = XIL_ExpLBound(xil_arg, stride_type);
-  else if (!strcmp(name,"__zterm"))
-    result = XIL_ExpZTerm(xil_arg, stride_type);
-  else
-    gcc_unreachable();
-
-  XIL_ProcessResult(env, result);
-  return true;
-}
 
 // get the virtual function field for an obj_type_ref on a type.
 static XIL_Field XIL_GetVTableField(tree type, tree node)
@@ -1718,33 +1567,11 @@ void XIL_TranslateExpression(struct XIL_TreeEnv *env, tree node)
     left_env.result_lval = &xil_left;
     XIL_TranslateTree(&left_env, left);
 
-    // check if we are assigning to an annotation variable.
-    bool processed = false;
-    if (xil_has_annotation && TREE_CODE(left) == VAR_DECL) {
-      const char *name = IDENTIFIER_POINTER(DECL_NAME(left));
-      if (is_annotation_variable(name)) {
-        XIL_Exp xil_value;
-        MAKE_ENV(right_env, env->point, post_edges);
-        right_env.result_lval = &xil_value;
-        XIL_TranslateTree(&right_env, right);
-
-        XIL_PPoint after_point = XIL_CFGAddPoint(loc);
-        XIL_Exp value = get_annotation_variable_value(name, xil_value);
-        XIL_CFGEdgeAssign(*env->point, after_point,
-                          xil_type, xil_left, value);
-
-        *env->point = after_point;
-        processed = true;
-      }
-    }
-
-    if (!processed) {
-      // standard assignment otherwise.
-      MAKE_ENV(right_env, env->point, post_edges);
-      right_env.result_assign = xil_left;
-      right_env.result_assign_type = xil_type;
-      XIL_TranslateTree(&right_env, right);
-    }
+    // standard assignment.
+    MAKE_ENV(right_env, env->point, post_edges);
+    right_env.result_assign = xil_left;
+    right_env.result_assign_type = xil_type;
+    XIL_TranslateTree(&right_env, right);
 
     XIL_ConnectPostPoint(env->point, post_local);
 
@@ -2113,10 +1940,6 @@ void XIL_TranslateExpression(struct XIL_TreeEnv *env, tree node)
 
   case CALL_EXPR:
   case AGGR_INIT_EXPR: {
-    // check for special annotation functions being called.
-    if (XIL_TranslateAnnotationCall(env, node))
-      return;
-
     tree function = CALL_EXPR_FN(node);
     if (!function) {
       // This happens somehow with MOZ_FALLTHROUGH.

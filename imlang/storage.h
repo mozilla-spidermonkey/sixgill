@@ -34,9 +34,6 @@ NAMESPACE_XGILL_BEGIN
 #define BODY_DATABASE        "body"
 #define INIT_DATABASE        "init"
 #define COMP_DATABASE        "comp"
-#define BODY_ANNOT_DATABASE  "body_annot"
-#define INIT_ANNOT_DATABASE  "init_annot"
-#define COMP_ANNOT_DATABASE  "comp_annot"
 // 8-byte length+CRC32 fingerprint of each preprocessed translation unit,
 // used for incremental change detection.
 #define FINGERPRINT_DATABASE "fingerprint"
@@ -64,20 +61,9 @@ extern Cache_BlockCFG      BlockCFGCache;
 extern Cache_Initializer   InitializerCache;
 extern Cache_CompositeCSU  CompositeCSUCache;
 
-typedef HashCache<String*,Vector<BlockCFG*>*,String>  Cache_Annotation;
-
-// caches for looking up annotations on functions, initializers or CSU types.
-extern Cache_Annotation  BodyAnnotCache;
-extern Cache_Annotation  InitAnnotCache;
-extern Cache_Annotation  CompAnnotCache;
-
 // gets a reference on the CFG for id, loading it if necessary.
 // NULL if the CFG was not found.
 BlockCFG* GetBlockCFG(BlockId *id);
-
-// gets a reference on the annotation CFG for id, loading it if necessary.
-// NULL if the CFG was not found, and emits a warning.
-BlockCFG* GetAnnotationCFG(BlockId *id);
 
 // add entries to the CFG cache without doing an explicit lookup.
 // does *not* consume references on the CFGs.

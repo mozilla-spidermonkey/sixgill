@@ -450,17 +450,6 @@ const char* XIL_CSUName(tree type, const char *name)
   // do some last minute checking to see if we have a better name for this
   // structure.
 
-  // watch for an annot_global attribute for annotation processing.
-  tree attr = TYPE_ATTRIBUTES(type);
-  while (attr) {
-    const char *new_name = NULL;
-    const char *purpose = XIL_DecodeAttribute(attr, &new_name, NULL);
-
-    if (purpose && !strcmp(purpose, "annot_global") && new_name)
-      *field_csu = XIL_TypeCSU(new_name, NULL);
-    attr = TREE_CHAIN(attr);
-  }
-
   // template instantiations do not have names filled in. get one now.
   if (c_dialect_cxx() && !*field_csu && CLASS_TYPE_P(type) && CLASSTYPE_USE_TEMPLATE(type)) {
     *field_csu = XIL_TypeCSU(type_as_string(type, TFF_CHASE_TYPEDEF_IF_SAFE), NULL);
@@ -765,10 +754,6 @@ XIL_Type XIL_TranslateRecordType(tree type)
   int generate = 0;
   int *pgenerate = &generate;
 
-  // don't generate CSU types from annotation files.
-  if (xil_has_annotation)
-    pgenerate = NULL;
-
   // don't generate CSU types if we already had unrecognized trees, so we don't
   // confuse errors arising in different CSUs or functions.
   if (xil_active_env.dropped)
@@ -846,22 +831,14 @@ XIL_Type XIL_TranslateRecordType(tree type)
     }
   }
 
-  // process any annotation attributes on the type.
+  // process any 'annotate' attributes on the type.
   tree attr = TYPE_ATTRIBUTES(type);
   while (attr) {
-    XIL_ProcessAnnotationAttr(type, attr, NULL, NULL);
+    const char *annot_text = NULL;
+    const char *purpose = XIL_DecodeAttribute(attr, &annot_text, NULL);
+    if (purpose && !strcmp(purpose, "annotate") && annot_text)
+      XIL_CSUAddAnnotation(purpose, annot_text);
     attr = TREE_CHAIN(attr);
-  }
-
-  // process any annotations read in from file for the type.
-  int count = XIL_GetAnnotationCount(name.str, false, true);
-  for (ind = 0; ind < count; ind++) {
-    const char *where;
-    const char *point_text, *annot_text;
-    int trusted;
-    XIL_GetAnnotation(name.str, false, true, ind, &where,
-                      &point_text, &annot_text, &trusted);
-    XIL_ProcessAnnotationRead(type, where, point_text, annot_text, trusted);
   }
 
   XIL_PopActiveCSU(xil_active_env.dropped);
@@ -950,9 +927,8 @@ XIL_Type XIL_TranslateFunctionType(tree type)
     arg_array[arg_count++] = xil_arg_type;
   }
 
-  // The pending annotations list *might* contain annotations for other types,
-  // if for example we are processing a function that takes a function as an
-  // argument. Our annotations will be at the head of the list.
+  // Attach any pending 'annotate' attributes for this function type.
+  // These were queued up in XIL_GenerateBlock from DECL_ATTRIBUTES.
   XIL_AnnotationList annotations = XIL_MakeAnnotationList();
   while (xil_active_env.annots && xil_active_env.annots->type == type) {
     struct XIL_PendingAnnotation *annot = xil_active_env.annots;
@@ -960,8 +936,8 @@ XIL_Type XIL_TranslateFunctionType(tree type)
 
     const char *annot_text = NULL;
     const char *purpose = XIL_DecodeAttribute(annot->attr, &annot_text, NULL);
-    if (purpose)
-        annotations = XIL_PrependAnnotation(annotations, purpose, annot_text);
+    if (purpose && annot_text)
+      annotations = XIL_PrependAnnotation(annotations, purpose, annot_text);
 
     free(annot);
   }

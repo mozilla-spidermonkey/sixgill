@@ -83,12 +83,15 @@ int main(int argc, const char **argv)
   if (xf.HasError()) {
     return 1;  // XdbFile has already logged the error.
   }
+  if (!xf.Exists()) {
+    fprintf(logfile, "ERROR: no database file %s\n", file);
+    return 1;
+  }
   Xdb *xdb = xf.Table(table);
 
   if (!xdb->Exists()) {
-    ClearBlockCaches();
-    AnalysisFinish(0);
-    return 0;
+    fprintf(logfile, "ERROR: no table %s in %s\n", table, file);
+    return 1;
   }
 
   Buffer bkey((const uint8_t*) key, strlen(key) + 1);

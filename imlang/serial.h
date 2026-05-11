@@ -181,9 +181,6 @@
 // children: TAG_Index
 #define TAG_LoopIsomorphic  1624
 
-// children: TAG_Index, TAG_BlockId
-#define TAG_PointAnnotation  1626
-
 // children:
 //   TAG_Kind (all)
 //   TAG_Index (all x2)
@@ -211,7 +208,6 @@
 //   TAG_Location x2
 //   TAG_Type (instance function only)
 //   TAG_Field (instance function only)
-//   TAG_Kind (annotation CFGs only)
 //   ordered list of TAG_PPoint
 //   ordered list of TAG_PEdge
 //   TAG_Index x2  (for entry/exit points)
@@ -219,5 +215,4 @@
 //   list of TAG_BlockPPoint (loop parents)
 //   list of TAG_LoopHead
 //   list of TAG_LoopIsomorphic
-//   list of TAG_PointAnnotation
 #define TAG_BlockCFG 1700
