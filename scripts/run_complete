@@ -17,11 +17,17 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-# do a complete run of the system from raw source to reports. this requires
-# various run_monitor processes to be running in the background (maybe on other
-# machines) and watching a shared poll_file for jobs. if the output directory
-# for this script already exists then an incremental analysis will be performed
-# and the reports will only reflect the changes since the earlier run.
+# Build a project with the xgill plugin, producing xdb.sqlite (and
+# xdb-source.sqlite, when source is captured) in the result directory. The
+# script forks into the background and logs to result-dir/complete.log. The
+# build runs through the wrap_gcc wrappers, optionally sending all database
+# writes through a single xmanager process (see $use_xmanager). If the result
+# directory does not exist yet, the project is cleaned before building.
+# Rerunning into an existing result directory recompiles only what changed and
+# updates xdb.sqlite in place, without removing entries for code that has gone
+# away.
+#
+# Edit the environment-specific settings below before use.
 
 use strict;
 use IO::Handle;
