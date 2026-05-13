@@ -32,7 +32,7 @@ static bool is_keeping_source() {
 
 // Every table in XDB_FILE.
 static const char *const g_main_tables[] = {
-  BODY_DATABASE, INIT_DATABASE, COMP_DATABASE, FINGERPRINT_DATABASE, NULL
+  BODY_DATABASE, INIT_DATABASE, COMP_DATABASE, NULL
 };
 
 // Every table in XDB_SOURCE_FILE.

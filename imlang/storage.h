@@ -38,21 +38,9 @@ NAMESPACE_XGILL_BEGIN
 #define BODY_DATABASE        "body"
 #define INIT_DATABASE        "init"
 #define COMP_DATABASE        "comp"
-// 8-byte length+CRC32 fingerprint of each preprocessed translation unit,
-// used for incremental change detection.
-#define FINGERPRINT_DATABASE "fingerprint"
-
 // Table names within XDB_SOURCE_FILE (created only when XGILL_KEEP_SOURCE=1).
 #define SOURCE_DATABASE  "source"
 #define PREPROC_DATABASE "preproc"
-
-// hash names for worklists.
-#define WORKLIST_FUNC_HASH "worklist_func_hash"
-#define WORKLIST_GLOB_HASH "worklist_glob_hash"
-#define WORKLIST_COMP_HASH "worklist_comp_hash"
-
-// hash name used by the block backend for storing the next stage's worklist.
-#define WORKLIST_FUNC_NEXT "worklist_func_next"
 
 // cache lookup structures.
 

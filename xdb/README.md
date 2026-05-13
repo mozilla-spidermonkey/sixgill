@@ -27,12 +27,6 @@ converting it to JSON.
 | `body` | text | function name | serialized `BlockCFG` |
 | `init` | text | variable type and name | serialized `BlockCFG` for initializers |
 | `comp` | text | type name | serialized `CompositeCSU` |
-| `fingerprint` | text | source file path | 8-byte <length,crc32> of the uncompressed preprocessed text |
-
-The `fingerprint` table is written by `xsource` (run via `wrap_gcc`). It is used
-for incremental analysis: if the length and CRC32 of a translation unit's
-preprocessed output match the stored values, the file is assumed to be unchanged
-and its existing results are reused.
 
 ### `xdb-source.sqlite` — written by `xsource` (via `wrap_gcc`)
 
