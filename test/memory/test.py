@@ -115,7 +115,7 @@ assert(len(f) in (4, 2))  # It's complicated. It used to be more complicated.
 # Rely on the plugin's assertions for testing all remaining functions in loop.c.
 
 compile("goto_loop.cc")
-f = load_db_entry("body", re.compile(r"goto_into_loop\("))
+f = load_db_entry("body", re.compile("goto_into_loop"))
 assert(len(f) == 3)  # inner loop, outer loop, function
 inner, outer, main = f
 assert(matching_edges(main, ["Assign", "Loop", "Assign", "Assign", "Loop", "Assume", "Assign"]))

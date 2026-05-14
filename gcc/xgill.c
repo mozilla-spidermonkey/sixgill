@@ -37,7 +37,6 @@ const char *xil_remote_address = NULL;
 const char *xil_gcc_path = NULL;
 const char *xil_plugin_path = NULL;
 const char *xil_command = NULL;
-bool xil_prefix_with_mangled = false;
 
 int xil_pointer_width = 0;
 struct XIL_ScopeEnv *xil_active_scope = NULL;
@@ -758,12 +757,6 @@ int plugin_init(struct plugin_name_args *plugin_info,
         normalize_directory = arg_value;
       else
         printf("WARNING: xgill argument 'basedir' requires value\n");
-    }
-    else if (!strcmp(arg_key,"mangle")) {
-      if (arg_value)
-        xil_prefix_with_mangled = arg_value && arg_value[0] != '0';
-      else
-        printf("WARNING: xgill argument 'mangle' requires value\n");
     }
     else {
       printf("WARNING: xgill unrecognized argument %s\n", arg_key);

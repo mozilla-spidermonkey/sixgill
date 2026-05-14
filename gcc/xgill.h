@@ -157,8 +157,6 @@ extern int xil_pointer_width;
 // set to zero to disable generation of record types.
 extern int xil_generate_record_types;
 
-// set to one to prefix function names with their mangled names
-extern bool xil_prefix_with_mangled;
 
 // information about post side effects (postincr, postdecr) that were added
 // to the CFG at some tree node.

@@ -19,7 +19,7 @@ assert('other2' in body['Variables'])
 
 # Test function annotations
 js_GC = process_body(load_db_entry("body", re.compile(r'js_GC'))[0])
-annotations = js_GC['Variables']['void js_GC()']['Annotation']
+annotations = js_GC['Variables']['_Z5js_GCv']['Annotation']
 assert(annotations)
 found_call_tag = False
 for annotation in annotations:
@@ -48,7 +48,7 @@ assert(len(bases) == 2)
 
 # Verify that function arguments remember whether they are references.
 
-f = load_db_entry("body", re.compile(r'^void lambda_stuff'))
+f = load_db_entry("body", '_Z12lambda_stuffPiRiOi')
 variables = f[0]['DefineVariable']
 
 def param_type(name, variables=variables):
@@ -76,6 +76,6 @@ compile("lazy.cpp")
 
 # Prevent blowup from array initializers. This should clamp to 100 Assign expressions.
 compile("array.cpp")
-f = load_db_entry("body", re.compile(r'^void array_test'))
+f = load_db_entry("body", '_Z10array_testv')
 assigns = [e for e in f[0]['PEdge'] if e['Kind'] == 'Assign']
 assert(len(assigns) == 100)
