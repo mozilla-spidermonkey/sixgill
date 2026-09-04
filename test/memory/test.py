@@ -114,6 +114,12 @@ assert(len(f) in (4, 2))  # It's complicated. It used to be more complicated.
 
 # Rely on the plugin's assertions for testing all remaining functions in loop.c.
 
+compile("goto_loop.cc")
+f = load_db_entry("src_body", re.compile(r"goto_into_loop\("))
+assert(len(f) == 3)  # inner loop, outer loop, function
+inner, outer, main = f
+assert(matching_edges(main, ["Assign", "Loop", "Assign", "Assign", "Loop", "Assume", "Assign"]))
+
 # Timing test: without the optimization of discarding loop heads without back
 # edges to them, this will take 10s of seconds. With it, this should take well
 # under a second.

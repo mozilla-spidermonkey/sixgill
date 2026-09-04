@@ -1478,6 +1478,96 @@ static void WriteForceAnnotations()
   delete t;
 }
 
+// fill in on_cycle such that on_cycle[p] is true iff point p lies on some
+// cycle of cfg, i.e. p has a self edge or is in a strongly connected
+// component with more than one point. Iterative Tarjan's algorithm.
+static void ComputeCyclePoints(BlockCFG *cfg, Vector<bool> *on_cycle)
+{
+  size_t count = cfg->GetPointCount();
+
+  Vector<size_t> index;
+  Vector<size_t> lowlink;
+  Vector<bool> on_stack;
+  for (size_t ind = 0; ind <= count; ind++) {
+    on_cycle->PushBack(false);
+    index.PushBack(0);
+    lowlink.PushBack(0);
+    on_stack.PushBack(false);
+  }
+
+  Vector<PPoint> stack;
+
+  // DFS frames: the point and the index of its next outgoing edge to visit.
+  Vector<PPoint> frame_point;
+  Vector<size_t> frame_edge;
+
+  size_t next_index = 1;
+
+  for (PPoint root = 1; root <= count; root++) {
+    if (index.At(root))
+      continue;
+
+    index.At(root) = lowlink.At(root) = next_index++;
+    stack.PushBack(root);
+    on_stack.At(root) = true;
+    frame_point.PushBack(root);
+    frame_edge.PushBack(0);
+
+    while (!frame_point.Empty()) {
+      PPoint point = frame_point.Back();
+      const Vector<PEdge*> &outgoing = cfg->GetOutgoingEdges(point);
+      size_t eind = frame_edge.Back();
+
+      if (eind < outgoing.Size()) {
+        frame_edge.Back() = eind + 1;
+        PPoint next = outgoing.At(eind)->GetTarget();
+        if (next == 0)
+          continue;
+        if (next == point) {
+          on_cycle->At(point) = true;
+        }
+        else if (!index.At(next)) {
+          index.At(next) = lowlink.At(next) = next_index++;
+          stack.PushBack(next);
+          on_stack.At(next) = true;
+          frame_point.PushBack(next);
+          frame_edge.PushBack(0);
+        }
+        else if (on_stack.At(next)) {
+          if (index.At(next) < lowlink.At(point))
+            lowlink.At(point) = index.At(next);
+        }
+        continue;
+      }
+
+      if (lowlink.At(point) == index.At(point)) {
+        size_t first = stack.Size();
+        do {
+          first--;
+          on_stack.At(stack.At(first)) = false;
+        } while (stack.At(first) != point);
+
+        if (stack.Size() - first > 1) {
+          for (size_t ind = first; ind < stack.Size(); ind++)
+            on_cycle->At(stack.At(ind)) = true;
+        }
+
+        while (stack.Size() > first)
+          stack.PopBack();
+      }
+
+      frame_point.PopBack();
+      frame_edge.PopBack();
+
+      if (!frame_point.Empty()) {
+        PPoint parent = frame_point.Back();
+        if (lowlink.At(point) < lowlink.At(parent))
+          lowlink.At(parent) = lowlink.At(point);
+      }
+    }
+  }
+}
+
 extern "C" void XIL_WriteGenerated()
 {
   if (g_has_annotation) {
@@ -1545,15 +1635,21 @@ extern "C" void XIL_WriteGenerated()
     // do loop splitting, and add any point annotations.
     Vector<BlockCFG*> split_cfgs;
 
-    // Discard loop heads that have a single incoming edge. This can
-    // dramatically speed up cases where you have a large number of trivial `do
-    // { ... } while(0)` loops that aren't actually loops. (They will be marked
-    // as loop heads, but no back edges point to them.)
+    // Discard loop heads that have a single incoming edge and are not on any
+    // cycle. This can dramatically speed up cases where you have a large
+    // number of trivial `do { ... } while(0)` loops that aren't actually loops.
+    // (They will be marked as loop heads, but no back edges point to them.)
+    // The cycle check matters when a loop body is only entered by a goto that
+    // bypasses the head: the single incoming edge is then the back edge.
+    Vector<bool> on_cycle;
+    ComputeCyclePoints(cfg, &on_cycle);
+
     size_t r, w = 0;
     PPoint entry = cfg->GetEntryPoint();
     for (r = 0; r < cfg->GetLoopHeadCount(); r++) {
       PPoint head = cfg->GetLoopHead(r).point;
-      if (cfg->GetIncomingEdges(head).Size() >= 2 || head == entry) {
+      if (cfg->GetIncomingEdges(head).Size() >= 2 || head == entry ||
+          on_cycle.At(head)) {
         if (r != w) {
           cfg->SetLoopHead(w, cfg->GetLoopHead(r));
         }
