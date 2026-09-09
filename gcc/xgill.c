@@ -257,7 +257,9 @@ const char* XIL_DecodeAttribute(tree attr,
                                 const char **text_value, int *int_value)
 {
   tree purpose = TREE_PURPOSE(attr);
-  if (!purpose || TREE_CODE(purpose) != IDENTIFIER_NODE) {
+  if (!purpose)
+    return NULL;
+  if (TREE_CODE(purpose) != IDENTIFIER_NODE) {
     // All of our attributes so far are simple strings. Attributes with multiple args
     // will show up here.
     if (TREE_CODE(purpose) == TREE_LIST)
@@ -276,6 +278,13 @@ const char* XIL_DecodeAttribute(tree attr,
     return name;
   }
   value = TREE_VALUE(value);
+
+  // Internal attributes may have an empty argument. gcc's C++ frontend
+  // attaches an "operator bindings" attribute to functions containing a
+  // generic lambda that uses an operator, and records a NULL binding for
+  // operators which resolve to a builtin.
+  if (!value)
+    return name;
 
   if (TREE_CODE(value) == STRING_CST) {
     if (text_value)
