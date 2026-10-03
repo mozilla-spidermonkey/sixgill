@@ -1,3 +1,4 @@
 {
-    "TARGET_CC": "@TARGET_CC@"
+    "TARGET_CC": "@TARGET_CC@",
+    "CLANG_DIR": "@CLANG_DIR@"
 }

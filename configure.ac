@@ -145,6 +145,31 @@ int test = VOID_CST;
 )
 
 dnl ***********************
+dnl Clang plugin support
+dnl ***********************
+AC_ARG_WITH([clang],
+            [AS_HELP_STRING([--with-clang=DIR],
+              [Build the clang plugin against the clang installation in DIR])],
+            [CLANG_DIR=$withval])
+CLANG_PLUGIN_SUPPORT=no
+LLVM_CXXFLAGS=
+if test "x$CLANG_DIR" != "x" -a "x$CLANG_DIR" != "xno" ; then
+   AC_MSG_CHECKING([clang plugin support])
+   if test -x "$CLANG_DIR/bin/llvm-config" -a -x "$CLANG_DIR/bin/clang++" -a \
+           -f "$CLANG_DIR/include/clang/Frontend/FrontendPluginRegistry.h" ; then
+      CLANG_PLUGIN_SUPPORT=yes
+      LLVM_CXXFLAGS=`$CLANG_DIR/bin/llvm-config --cxxflags`
+      CLANG_VERSION=`$CLANG_DIR/bin/llvm-config --version`
+      AC_MSG_RESULT([clang $CLANG_VERSION])
+   else
+      AC_MSG_ERROR([$CLANG_DIR does not contain clang++, llvm-config, and the clang headers])
+   fi
+fi
+AC_SUBST(CLANG_PLUGIN_SUPPORT)
+AC_SUBST(CLANG_DIR)
+AC_SUBST(LLVM_CXXFLAGS)
+
+dnl ***********************
 dnl Results
 dnl ***********************
 AC_CONFIG_FILES([config.mk config.json])
@@ -160,6 +185,7 @@ sixgill configuration (Please review)
              - prefix:                  $prefix
 
            * GCC Plugin:                $GCC_PLUGIN_SUPPORT
+           * Clang Plugin:              $CLANG_PLUGIN_SUPPORT
 
 ===============================================================
 

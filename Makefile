@@ -192,6 +192,14 @@ else
 build-plugin: bin/libxgill.a
 endif
 
+ifeq ($(CLANG_PLUGIN_SUPPORT),yes)
+build-plugin: build-clang-plugin
+endif
+
+.PHONY: build-clang-plugin
+build-clang-plugin: $(ALL_LIBS)
+	$(MAKE) -C clang
+
 BUILD_LIBS = $(ALL_LIBS) $(LDFLAGS)
 
 bin/xdbfind: main/xdbfind.o $(ALL_LIBS)
@@ -251,6 +259,11 @@ install: all
 	$(INSTALL_BIN) gcc/xgill.so $(INSTROOT)/libexec/sixgill/gcc/
 	$(INSTALL) scripts/run_complete $(INSTROOT)/libexec/sixgill/scripts/
 	$(INSTALL) scripts/wrap_gcc/* $(INSTROOT)/libexec/sixgill/scripts/wrap_gcc/
+ifeq ($(CLANG_PLUGIN_SUPPORT),yes)
+	$(INSTALL) -d $(INSTROOT)/libexec/sixgill/clang $(INSTROOT)/libexec/sixgill/scripts/wrap_clang
+	$(INSTALL_BIN) clang/xgill-clang.so $(INSTROOT)/libexec/sixgill/clang/
+	$(INSTALL) scripts/wrap_clang/* $(INSTROOT)/libexec/sixgill/scripts/wrap_clang/
+endif
 ifeq ($(WITHOUT_WASM),)
 	$(INSTALL) $(WASM_JS) $(WASM_OUT) $(WASM_OUT:.mjs=.wasm) $(INSTROOT)/libexec/sixgill/wasm/
 endif
@@ -263,6 +276,7 @@ clean:
 	rm -f config.log config.status
 	rm -rf test/test-output
 	$(MAKE) -C gcc clean
+	$(MAKE) -C clang clean
 	$(MAKE) -C libevent clean
 
 distclean: clean

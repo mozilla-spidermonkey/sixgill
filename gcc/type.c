@@ -163,6 +163,14 @@ bool XIL_IsAnonymous(tree type)
   if (idnode && TREE_CODE(idnode) == IDENTIFIER_NODE)
     return false;
 
+  // in C, a TYPE_DECL name comes from a typedef of an anonymous struct, or a
+  // builtin type such as __va_list_tag. use that name rather than naming the
+  // type after its first use.
+  tree main_idnode = TYPE_NAME(TYPE_MAIN_VARIANT(type));
+  if (!c_dialect_cxx() && main_idnode && TREE_CODE(main_idnode) == TYPE_DECL &&
+      DECL_NAME(main_idnode))
+    return false;
+
   return true;
 }
 
@@ -441,6 +449,9 @@ const char* XIL_CSUName(tree type, const char *name)
     // otherwise use a default name.
     if (TYPE_NAME(type) && TREE_CODE(TYPE_NAME(type)) == TYPE_DECL)
       return decl_as_string(TYPE_NAME(type), 0);
+    // C structs (including incomplete ones) are named by their tag.
+    if (TYPE_NAME(type) && TREE_CODE(TYPE_NAME(type)) == IDENTIFIER_NODE)
+      return IDENTIFIER_POINTER(TYPE_NAME(type));
     return "__empty__";
   }
 
@@ -705,9 +716,7 @@ void XIL_AddDataFields(tree type)
     }
 
     // compute the byte offset of the field into the structure.
-    tree offset = DECL_FIELD_OFFSET(decl);
-    tree bit_offset = DECL_FIELD_BIT_OFFSET(decl);
-    int byte_offset = TREE_SMALL_CONSTANT(offset) + (TREE_SMALL_CONSTANT(bit_offset) / 8);
+    int byte_offset = int_byte_position(decl);
 
     XIL_Field field = XIL_TranslateField(decl);
     XIL_CSUAddDataField(field, byte_offset);
@@ -727,8 +736,9 @@ XIL_Type XIL_TranslateRecordType(tree type)
   if (!name.str) {
     // no name we know of for this type. we can still get here in cp if we
     // see methods for the structure before the finish_type for the structure.
-    // pick up the name at this point.
-    tree idnode = TYPE_NAME(type);
+    // pick up the name at this point. use the name of the main variant, so
+    // that a typedef of a typedef doesn't change the name.
+    tree idnode = TYPE_NAME(c_dialect_cxx() ? type : TYPE_MAIN_VARIANT(type));
     if (idnode && TREE_CODE(idnode) == TYPE_DECL) {
       tree decl_idnode = DECL_NAME(idnode);
       const char* idname = IDENTIFIER_POINTER(decl_idnode);
@@ -914,7 +924,7 @@ XIL_Type XIL_TranslateFunctionType(tree type)
       const char *name = NULL;
       const char *purpose = XIL_DecodeAttribute(attr, &name, NULL);
 
-      if (purpose && name)
+      if (purpose && name && !strcmp(purpose, "annotate"))
           annotations = XIL_PrependAnnotation(annotations, purpose, name);
 
       attr = TREE_CHAIN(attr);
@@ -936,7 +946,7 @@ XIL_Type XIL_TranslateFunctionType(tree type)
 
     const char *annot_text = NULL;
     const char *purpose = XIL_DecodeAttribute(annot->attr, &annot_text, NULL);
-    if (purpose && annot_text)
+    if (purpose && annot_text && !strcmp(purpose, "annotate"))
       annotations = XIL_PrependAnnotation(annotations, purpose, annot_text);
 
     free(annot);
@@ -1096,7 +1106,7 @@ XIL_Field generate_TranslateField(tree decl)
       const char *name = NULL;
       const char *purpose = XIL_DecodeAttribute(attr, &name, NULL);
 
-      if (purpose && name)
+      if (purpose && name && !strcmp(purpose, "annotate"))
           annotations = XIL_PrependAnnotation(annotations, purpose, name);
 
       attr = TREE_CHAIN(attr);

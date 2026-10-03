@@ -17,8 +17,9 @@ def execfile(thefile, globals=None):
     exec(__builtins__.compile(open(thefile).read(), thefile, "exec"), globals)
 
 
-if not os.path.exists("test-output"):
-    os.mkdir("test-output")
+for d in ("test-output", "test-output-clang"):
+    if not os.path.exists(d):
+        os.mkdir(d)
 
 with open(os.path.join(topdir, "config.json")) as fh:
     config = json.load(fh)
@@ -81,13 +82,23 @@ class Body(dict):
         return self['Points'][self.assignment_point(varname)]
 
 
+# Usage: run-test.py [--compiler=gcc|clang] [test...]
 _, *tests = sys.argv
+frontend = "gcc"
+for arg in list(tests):
+    if arg.startswith("--compiler="):
+        frontend = arg.split("=", 1)[1]
+        tests.remove(arg)
 if not tests:
     tests = ['gchazard', 'gccbugs', 'memory']
 
+# clang errors out on some old-style C that gcc only warns about.
+CLANG_C_FLAGS = ("-Wno-error=implicit-function-declaration -Wno-error=implicit-int "
+                 "-Wno-error=int-conversion -Wno-error=incompatible-pointer-types")
+
 for name in tests:
     indir = os.path.join(topdir, "test", name)
-    outdir = os.path.join(topdir, "test", "test-output", name)
+    outdir = os.path.join(topdir, "test", "test-output" if frontend == "gcc" else f"test-output-{frontend}", name)
     if os.path.exists(outdir):
         # Clobber old database files to allow tests that count the number of
         # occurrences of certain symbols.
@@ -98,15 +109,24 @@ for name in tests:
         os.mkdir(outdir)
 
     def compile(source, env_mods={}):
-        if source.endswith(".c"):
+        if frontend == "clang":
+            clang_bin = os.path.join(config["CLANG_DIR"], "bin")
+            if source.endswith(".c"):
+                compile = f"{clang_bin}/clang {CLANG_C_FLAGS}"
+            else:
+                compile = f"{clang_bin}/clang++ -std=c++17"
+            sixgill = os.path.join(topdir, "clang", "xgill-clang.so")
+        elif source.endswith(".c"):
             compile = os.environ.get("CC", f"{config['TARGET_CC']} -x c")
+            sixgill = plugin
         else:
             compile = os.environ.get("CXX", f"{config['TARGET_CC']} -x c++")
             compile += " -std=c++17"
+            sixgill = plugin
         cmd = "{compile} -c {source} -fplugin={sixgill}".format(
             source=os.path.join(indir, source),
             compile=compile,
-            sixgill=plugin
+            sixgill=sixgill
         )
         print("Running %s" % cmd)
         os.environ['CCACHE_DISABLE'] = '1'

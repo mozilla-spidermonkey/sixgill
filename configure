@@ -642,6 +642,9 @@ ac_includes_default="\
 ac_header_c_list=
 ac_subst_vars='LTLIBOBJS
 LIBOBJS
+LLVM_CXXFLAGS
+CLANG_DIR
+CLANG_PLUGIN_SUPPORT
 GCC_PLUGIN_HEADERS
 GCC_PLUGIN_SUPPORT
 TARGET_CC
@@ -713,6 +716,7 @@ with_gmp
 enable_debug
 enable_track_memory
 with_target_cc
+with_clang
 '
       ac_precious_vars='build_alias
 host_alias
@@ -1355,6 +1359,8 @@ Optional Packages:
   --without-PACKAGE       do not use PACKAGE (same as --with-PACKAGE=no)
   --with-gmp=DIR          Use gmp from directory DIR
   --target-cc=PATH        Compiler that will run with the plugin
+  --with-clang=DIR        Build the clang plugin against the clang
+                          installation in DIR
 
 Some influential environment variables:
   CC          C compiler command
@@ -4466,6 +4472,33 @@ esac
 fi
 rm -f core conftest.err conftest.$ac_objext conftest.beam conftest.$ac_ext
 
+
+# Check whether --with-clang was given.
+if test ${with_clang+y}
+then :
+  withval=$with_clang; CLANG_DIR=$withval
+fi
+
+CLANG_PLUGIN_SUPPORT=no
+LLVM_CXXFLAGS=
+if test "x$CLANG_DIR" != "x" -a "x$CLANG_DIR" != "xno" ; then
+   { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking clang plugin support" >&5
+printf %s "checking clang plugin support... " >&6; }
+   if test -x "$CLANG_DIR/bin/llvm-config" -a -x "$CLANG_DIR/bin/clang++" -a \
+           -f "$CLANG_DIR/include/clang/Frontend/FrontendPluginRegistry.h" ; then
+      CLANG_PLUGIN_SUPPORT=yes
+      LLVM_CXXFLAGS=`$CLANG_DIR/bin/llvm-config --cxxflags`
+      CLANG_VERSION=`$CLANG_DIR/bin/llvm-config --version`
+      { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: clang $CLANG_VERSION" >&5
+printf "%s\n" "clang $CLANG_VERSION" >&6; }
+   else
+      as_fn_error $? "$CLANG_DIR does not contain clang++, llvm-config, and the clang headers" "$LINENO" 5
+   fi
+fi
+
+
+
+
 ac_config_files="$ac_config_files config.mk config.json"
 
 
@@ -5750,6 +5783,7 @@ sixgill configuration (Please review)
              - prefix:                  $prefix
 
            * GCC Plugin:                $GCC_PLUGIN_SUPPORT
+           * Clang Plugin:              $CLANG_PLUGIN_SUPPORT
 
 ===============================================================
 
@@ -5763,6 +5797,7 @@ sixgill configuration (Please review)
              - prefix:                  $prefix
 
            * GCC Plugin:                $GCC_PLUGIN_SUPPORT
+           * Clang Plugin:              $CLANG_PLUGIN_SUPPORT
 
 ===============================================================
 

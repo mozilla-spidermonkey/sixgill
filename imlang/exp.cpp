@@ -981,7 +981,7 @@ ExpInt* Exp::MakeInt(long value)
   static Buffer buf;
 
   mpz_t mpz;
-  mpz_init_set_ui(mpz, value);
+  mpz_init_set_si(mpz, value);
 
   IntToString(&buf, mpz);
   ExpInt xexp((const char*) buf.base);

@@ -34,7 +34,8 @@ use File::Basename qw(dirname basename);
 # may end up calling ourselves indirectly recursively if the directory
 # containing this script is in $PATH. So remove it. Also heuristically throw
 # out the ccache entry in $PATH.
-my @paths = grep { !/ccache/ && abs_path($_) ne abs_path($FindBin::Bin) } split(/:/, $ENV{PATH});
+my @wrapdirs = map { abs_path($_) } grep { -d $_ } ($FindBin::Bin, "$FindBin::Bin/../wrap_clang");
+my @paths = grep { my $p = abs_path($_) // $_; !/ccache/ && !grep { $_ eq $p } @wrapdirs } split(/:/, $ENV{PATH});
 $ENV{PATH} = join(':', @paths);
 
 my $full_ccname = shift or die "USAGE: basecc ccname ccarg*\n";
@@ -48,14 +49,20 @@ if (!$gccdir) {
 }
 die "Cannot find real gcc binaries" if ! $gccdir;
 
-if ($ccname !~ /(cc|\+\+)$/) {
+# clang uses its own plugin.
+my $is_clang = ($ccname =~ /clang/);
+
+if ($ccname !~ /(cc|\+\+|clang)$/) {
     log_basecc("FORWARDING non-compiler $ccname to $gccdir/$ccname @ARGV");
     exec("$gccdir/$ccname", @ARGV)
         or die "exec $gccdir/$ccname failed: $!";
 }
 
-my ($gccpath) = glob("$gccdir/*gcc");
-die "Cannot find gcc binary" if ! $gccpath;
+my $gccpath;
+if (!$is_clang) {
+    ($gccpath) = glob("$gccdir/*gcc");
+    die "Cannot find gcc binary" if ! $gccpath;
+}
 
 my $xsource;
 if (! $ENV{XGILL_NO_SOURCE}) {
@@ -64,8 +71,10 @@ if (! $ENV{XGILL_NO_SOURCE}) {
     $xsource .= "/xsource";
 }
 
-my ($plugindir) = grep { (-x "$_/xgill.so") } $FindBin::Bin, "$FindBin::Bin/../../gcc";
-die "Cannot find plugin xgill.so\n" if not $plugindir;
+my $pluginname = $is_clang ? "xgill-clang.so" : "xgill.so";
+my $plugindirname = $is_clang ? "clang" : "gcc";
+my ($plugindir) = grep { (-x "$_/$pluginname") } $FindBin::Bin, "$FindBin::Bin/../../$plugindirname";
+die "Cannot find plugin $pluginname\n" if not $plugindir;
 
 my $wrapdir = $FindBin::Bin;
 
@@ -95,8 +104,8 @@ $sourceargs .= " -log=$logfile" if ($logfile ne "");
 $sourceargs .= " -remote=$remote" if ($remote ne "");
 
 # plugin arguments to pass to the compiler.
-my $xgillargs = " -DXGILL_PLUGIN -fplugin=$plugindir/xgill.so";
-$xgillargs .= " -fplugin-arg-xgill-gcc=$gccpath";
+my $xgillargs = " -DXGILL_PLUGIN -fplugin=$plugindir/$pluginname";
+$xgillargs .= " -fplugin-arg-xgill-gcc=$gccpath" if !$is_clang;
 $xgillargs .= " -fplugin-arg-xgill-basedir=$basedir" if ($basedir ne "");
 $xgillargs .= " -fplugin-arg-xgill-remote=$remote" if ($remote ne "");
 $xgillargs .= " -fplugin-arg-xgill-log=$logfile" if ($logfile ne "");

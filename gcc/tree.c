@@ -1468,6 +1468,16 @@ void XIL_TranslateExpression(struct XIL_TreeEnv *env, tree node)
     tree decl = DECL_EXPR_DECL(decl_expr);
     XIL_Var xil_var = XIL_TranslateVar(decl);
     XIL_Exp xil_exp = XIL_ExpVar(xil_var);
+
+    // the declared variable is unnamed, so it is treated as a temporary and
+    // the DECL_EXPR does not handle its initializer. do that here.
+    tree initial = DECL_INITIAL(decl);
+    if (!DECL_NAME(decl) && initial) {
+      MAKE_ENV(initial_env, env->point, NULL);
+      initial_env.result_assign = xil_exp;
+      initial_env.result_assign_type = XIL_TranslateType(TREE_TYPE(decl));
+      XIL_TranslateTree(&initial_env, initial);
+    }
     XIL_Exp result = XIL_ExpDrf(xil_exp);
     XIL_ProcessResult(env, result);
     return;

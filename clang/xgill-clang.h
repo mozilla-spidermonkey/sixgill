@@ -1,0 +1,305 @@
+
+// Sixgill: Static assertion checker for C/C++ programs.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+#pragma once
+
+// clang front end for sixgill. This translates the Clang AST of each function
+// and global variable into sixgill's CFG representation through the XIL_*
+// interface, the same interface used by the gcc plugin (gcc/*.c). The
+// translation is modeled on gcc/tree.c so that the output has the same shape
+// as the gcc plugin's: see local/clang-port-plan.md for the overall design.
+
+#include "clang/AST/ASTContext.h"
+#include "clang/AST/Decl.h"
+#include "clang/AST/Expr.h"
+#include "clang/AST/Mangle.h"
+#include "clang/AST/Stmt.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
+
+#include <string>
+#include <vector>
+
+#include <imlang/interface.h>
+
+namespace xgill {
+
+// Settings from the plugin arguments and environment, shared by all
+// translation units.
+struct PluginOptions {
+  std::string remote;
+  std::string log;
+  std::string basedir;
+  std::string command;
+};
+
+// Post side effects of an expression (eg the increment in x++) are hung off a
+// chain of points that is spliced in after the containing statement. This
+// matches XIL_PostEdges in gcc/xgill.h.
+struct PostEdges {
+  XIL_PPoint start = 0;
+  XIL_PPoint end = 0;
+};
+
+// How the result of translating an expression is used. At most one of
+// branch/assign/lval/rval is set; if none are, the result is discarded. This
+// matches XIL_TreeEnv in gcc/xgill.h.
+struct Env {
+  // Point receiving side effects. Updated as side effects are generated, and
+  // set to zero if the code after the expression is unreachable.
+  XIL_PPoint *point;
+
+  // Where to hang post side effects, or null to use temporaries instead.
+  PostEdges *post;
+
+  // Whether the result fields below have been used.
+  bool processed = false;
+
+  // Branch to truePoint/falsePoint according to the value.
+  bool branch = false;
+  XIL_PPoint truePoint = 0;
+  XIL_PPoint falsePoint = 0;
+
+  // Assign the value to this lvalue.
+  XIL_Exp assign = nullptr;
+  XIL_Type assignType = nullptr;
+
+  // Receive the lvalue (address) or rvalue of the expression.
+  XIL_Exp *lval = nullptr;
+  XIL_Exp *rval = nullptr;
+
+  explicit Env(XIL_PPoint *point, PostEdges *post = nullptr)
+    : point(point), post(post) {}
+
+  bool used() const { return branch || assign || lval || rval; }
+};
+
+// Control flow targets for break/continue and switch statements.
+struct Scope {
+  Scope *parent = nullptr;
+  XIL_PPoint breakPoint = 0;
+  XIL_PPoint continuePoint = 0;
+
+  // Set for switch statements.
+  XIL_Exp switchTest = nullptr;
+  XIL_PPoint switchPoint = 0;
+  XIL_PPoint defaultPoint = 0;
+};
+
+class Translator;
+
+// Translates the body of a single function or global variable initializer.
+class BlockTranslator {
+public:
+  BlockTranslator(Translator &tr, const clang::Decl *decl);
+
+  // Generate the CFG for a function definition or global variable.
+  void GenerateFunction(const clang::FunctionDecl *fd);
+  void GenerateGlobal(const clang::VarDecl *vd, XIL_Var var);
+  void GenerateFuncName(const clang::PredefinedExpr *pe, XIL_Var var);
+
+  std::string FuncNameString(const clang::PredefinedExpr *pe);
+
+private:
+  Translator &T;
+  clang::ASTContext &Ctx;
+
+  // The function being generated, if this is not a global initializer.
+  const clang::FunctionDecl *Func = nullptr;
+  std::string DeclName;
+
+  XIL_PPoint EntryPoint = 0;
+  XIL_PPoint ExitPoint = 0;
+
+  // Most recent point we updated the location of, for locations of new
+  // points created where there is no source location.
+  XIL_PPoint LastPoint = 0;
+
+  int TempCount = 0;
+
+  // Local variables and parameters that have been translated, and how many
+  // locals with each name have been seen (for uniquing shadowed names).
+  llvm::DenseMap<const clang::ValueDecl*, XIL_Var> Locals;
+  llvm::StringMap<int> LocalNameCounts;
+  XIL_Var ReturnVar = nullptr;
+
+  Scope *ActiveScope = nullptr;
+
+  // Labels, and gotos to labels that have not been seen yet.
+  struct LabelData {
+    XIL_PPoint point = 0;
+    std::vector<XIL_PPoint> gotos;
+  };
+  llvm::DenseMap<const clang::LabelDecl*, LabelData> Labels;
+
+  // Values of expressions that are evaluated once but referenced more than
+  // once (the condition of a GNU ?: operator, OpaqueValueExprs).
+  llvm::DenseMap<const clang::Expr*, XIL_Exp> SavedValues;
+
+  // Whether this block hit a construct that could not be translated. The CFG
+  // is dropped in that case, as with the gcc plugin.
+  bool Dropped = false;
+
+  // Location handling.
+  XIL_Location UpdateLocation(XIL_PPoint point, clang::SourceLocation loc);
+  XIL_Location UpdateLocation(XIL_PPoint point, const clang::Stmt *s);
+  XIL_Location CurrentLocation();
+  XIL_PPoint AddPoint(XIL_Location loc);
+
+  // Error handling. Unexpected drops the CFG; the *Result versions also fill
+  // in an error value for the expression.
+  void Unexpected(const char *what, const clang::Stmt *s);
+  void UnexpectedResult(Env &env, const char *what, const clang::Stmt *s);
+  void BogusResult(Env &env);
+
+  // Variables.
+  XIL_Var TranslateLocal(const clang::VarDecl *vd);
+  XIL_Var TranslateParam(const clang::ParmVarDecl *pd);
+  XIL_Var TranslateValueDecl(const clang::ValueDecl *d);
+  XIL_Var GetReturnVar();
+  XIL_Var NewTemporary(XIL_Type type);
+  XIL_Var NewTemporary(clang::QualType type);
+
+  // Expressions. TranslateExpr fills in the result per env.
+  void ProcessResult(Env &env, XIL_Exp result);
+  void TranslateExpr(Env &env, const clang::Expr *e);
+  void TranslateExprInner(Env &env, const clang::Expr *e);
+  XIL_Exp RValue(const clang::Expr *e, XIL_PPoint *point, PostEdges *post = nullptr);
+  XIL_Exp LValue(const clang::Expr *e, XIL_PPoint *point, PostEdges *post = nullptr);
+  void Branch(const clang::Expr *e, XIL_PPoint *point,
+              XIL_PPoint truePoint, XIL_PPoint falsePoint);
+  bool TryFoldConstant(Env &env, const clang::Expr *e);
+
+  void TranslateCast(Env &env, const clang::CastExpr *e);
+  void TranslateUnary(Env &env, const clang::UnaryOperator *e);
+  void TranslateIncDec(Env &env, const clang::UnaryOperator *e);
+  void TranslateBinary(Env &env, const clang::BinaryOperator *e);
+  void TranslateAssign(Env &env, const clang::BinaryOperator *e);
+  void TranslateLogical(Env &env, const clang::BinaryOperator *e);
+  void TranslateConditional(Env &env, const clang::AbstractConditionalOperator *e);
+  void TranslateCall(Env &env, const clang::CallExpr *e);
+  void TranslateInitList(Env &env, const clang::InitListExpr *e);
+  void TranslateStmtExpr(Env &env, const clang::StmtExpr *e);
+  void TranslateVAArg(Env &env, const clang::VAArgExpr *e);
+  XIL_Exp MakeArithmetic(clang::BinaryOperatorKind op, clang::QualType resultType,
+                         clang::QualType leftType, XIL_Exp left,
+                         clang::QualType rightType, XIL_Exp right,
+                         const clang::Stmt *s);
+  XIL_Exp MakeTruthValue(XIL_Exp value, clang::QualType type, bool nonzero);
+
+  // Statements.
+  void TranslateStmt(XIL_PPoint *point, const clang::Stmt *s);
+  void TranslateCompound(XIL_PPoint *point, const clang::CompoundStmt *s);
+  void TranslateDecl(XIL_PPoint *point, PostEdges *post, const clang::Decl *d);
+  void TranslateReturn(XIL_PPoint *point, const clang::ReturnStmt *s);
+  void TranslateIf(XIL_PPoint *point, const clang::IfStmt *s);
+  void TranslateWhile(XIL_PPoint *point, const clang::WhileStmt *s);
+  void TranslateDo(XIL_PPoint *point, const clang::DoStmt *s);
+  void TranslateFor(XIL_PPoint *point, const clang::ForStmt *s);
+  void TranslateSwitch(XIL_PPoint *point, const clang::SwitchStmt *s);
+  void TranslateCase(XIL_PPoint *point, const clang::SwitchCase *s);
+  void TranslateLabel(XIL_PPoint *point, const clang::LabelStmt *s);
+  void TranslateGoto(XIL_PPoint *point, const clang::GotoStmt *s);
+  void ResolveGoto(XIL_PPoint source, XIL_PPoint target);
+  void ConnectPostPoint(XIL_PPoint *point, const PostEdges &post);
+  void PushScope(Scope &scope);
+  void PopScope();
+};
+
+// State for a whole translation unit: type and name translation, which is
+// shared between all the blocks generated from the translation unit.
+class Translator {
+public:
+  Translator(clang::ASTContext &ctx, const PluginOptions &options);
+
+  clang::ASTContext &Ctx;
+  clang::SourceManager &SM;
+  const PluginOptions &Options;
+
+  // Width of pointers on the target, in bytes.
+  int PointerWidth;
+
+  std::unique_ptr<clang::MangleContext> Mangler;
+
+  // Generate everything in the translation unit.
+  void TranslateUnit();
+
+  // Locations.
+  XIL_Location MakeLocation(clang::SourceLocation loc);
+  std::string FileBasename(clang::SourceLocation loc);
+
+  // Names (names.cpp).
+  std::string FunctionName(const clang::FunctionDecl *fd);
+  std::string GlobalVarName(const clang::VarDecl *vd);
+  std::string SourceName(const clang::NamedDecl *d);
+  XIL_Var FunctionVar(const clang::FunctionDecl *fd);
+  XIL_Var GlobalVar(const clang::VarDecl *vd);
+  XIL_Var FuncNameVar(const clang::PredefinedExpr *pe,
+                      const clang::FunctionDecl *fd);
+
+  // Types (types.cpp). Annotations on the function declaration are attached
+  // to the type when annotated is given; this happens only for the type of
+  // the function whose body is being generated, as with the gcc plugin.
+  XIL_Type TranslateType(clang::QualType type);
+  XIL_Type TranslateFunctionType(clang::QualType type,
+                                 const clang::FunctionDecl *annotated = nullptr);
+  XIL_Field TranslateField(const clang::FieldDecl *fd);
+  int TypeBytes(clang::QualType type);
+
+  // Give an anonymous struct/union type (or pointer/array of one) a name
+  // based on how it is first used, as the gcc plugin does.
+  void NameAnonymousType(clang::QualType type, const std::string &name);
+  bool IsAnonymousType(clang::QualType type);
+
+  // Whether translation of the active block hit an error in a type.
+  bool TypeError = false;
+
+private:
+  // CSU names that have been assigned to records.
+  llvm::DenseMap<const clang::RecordDecl*, std::string> RecordNames;
+
+  std::string RecordName(const clang::RecordDecl *rd);
+  XIL_Type TranslateRecordType(const clang::RecordDecl *rd);
+  XIL_Type TranslateIntType(clang::QualType type);
+
+  // Functions and globals that have had blocks generated, to avoid
+  // generating duplicates.
+  llvm::DenseSet<const clang::Decl*> Generated;
+
+  // __func__ and friends are static variables with their own initializer
+  // blocks. These are generated after the block for the function using them.
+  struct PendingFuncName {
+    const clang::PredefinedExpr *expr;
+    XIL_Var var;
+  };
+  std::vector<PendingFuncName> PendingFuncNames;
+  llvm::StringSet<> FuncNamesGenerated;
+
+  friend class BlockTranslator;
+};
+
+// Collect the annotate attributes on a declaration.
+XIL_AnnotationList DeclAnnotations(const clang::Decl *d);
+
+// Print a constant in the format the gcc plugin uses.
+std::string IntegerString(const llvm::APSInt &value);
+std::string FloatString(const llvm::APFloat &value);
+
+FILE *LogFile();
+
+} // namespace xgill
