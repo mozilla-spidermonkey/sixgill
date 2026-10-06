@@ -34,6 +34,7 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -89,22 +90,64 @@ struct Env {
   XIL_Exp *lval = nullptr;
   XIL_Exp *rval = nullptr;
 
+  // For C++ objects constructed into assign, whether the object is a
+  // temporary that needs to be destroyed, and when.
+  enum Destroy { DestroyNone, DestroyFullExpr, DestroyScope };
+  Destroy destroyAssign = DestroyNone;
+
+  // Whether a constructor called on assign is constructing a base class
+  // subobject, which uses the base object constructor variant.
+  bool baseSubobject = false;
+
   explicit Env(XIL_PPoint *point, PostEdges *post = nullptr)
     : point(point), post(post) {}
 
   bool used() const { return branch || assign || lval || rval; }
 };
 
-// Control flow targets for break/continue and switch statements.
+// A destructor call to make when leaving a scope or at the end of a full
+// expression. Temporaries that are only constructed on some paths through a
+// full expression have a flag variable that is set when they are constructed.
+struct Cleanup {
+  XIL_Exp instance;
+  const clang::CXXDestructorDecl *dtor;
+  XIL_Var flag = nullptr;
+};
+
+struct Scope;
+
+// The scopes enclosing a point, innermost first, with how many cleanups each
+// scope had at the time. This determines which destructors to call when
+// jumping from one point to another.
+typedef std::vector<std::pair<Scope*, size_t>> ScopeChain;
+
+// Language scopes (blocks, loops, switches), and the cleanup points for the
+// temporaries of full expressions. Scopes stay allocated until the end of the
+// block, so that gotos to labels in scopes that have been left can be
+// resolved.
 struct Scope {
   Scope *parent = nullptr;
+
+  // Control flow targets for break/continue, and the scopes at those targets.
   XIL_PPoint breakPoint = 0;
   XIL_PPoint continuePoint = 0;
+  ScopeChain breakChain;
+  ScopeChain continueChain;
 
   // Set for switch statements.
   XIL_Exp switchTest = nullptr;
   XIL_PPoint switchPoint = 0;
   XIL_PPoint defaultPoint = 0;
+
+  // Destructors to call when leaving the scope, in construction order.
+  std::vector<Cleanup> cleanups;
+
+  // Set for the scope of a full expression, whose cleanups are for its
+  // temporaries. The flags of conditionally constructed temporaries are
+  // cleared at the start of the full expression.
+  bool cleanupPoint = false;
+  int conditionalDepth = 0;
+  std::vector<XIL_Var> flags;
 };
 
 class Translator;
@@ -114,8 +157,9 @@ class BlockTranslator {
 public:
   BlockTranslator(Translator &tr, const clang::Decl *decl);
 
-  // Generate the CFG for a function definition or global variable.
-  void GenerateFunction(const clang::FunctionDecl *fd);
+  // Generate the CFG for a function definition or global variable. For
+  // constructors and destructors, this generates one variant.
+  void GenerateFunction(clang::GlobalDecl gd);
   void GenerateGlobal(const clang::VarDecl *vd, XIL_Var var);
   void GenerateFuncName(const clang::PredefinedExpr *pe, XIL_Var var);
 
@@ -132,6 +176,10 @@ private:
   XIL_PPoint EntryPoint = 0;
   XIL_PPoint ExitPoint = 0;
 
+  // Where return statements go. This is the exit point, except in base
+  // object destructors, where member and base destructors run after the body.
+  XIL_PPoint ReturnPoint = 0;
+
   // Most recent point we updated the location of, for locations of new
   // points created where there is no source location.
   XIL_PPoint LastPoint = 0;
@@ -144,12 +192,28 @@ private:
   llvm::StringMap<int> LocalNameCounts;
   XIL_Var ReturnVar = nullptr;
 
+  // In the body of a lambda, the closure field holding the captured 'this',
+  // and variables captured by reference, whose locals are references.
+  const clang::FieldDecl *ThisCapture = nullptr;
+  llvm::DenseSet<const clang::VarDecl*> ReferenceCaptures;
+
   Scope *ActiveScope = nullptr;
+  std::deque<Scope> AllScopes;
+
+  // How many conditional branches of an expression (arms of ?:, right sides
+  // of && and ||) we are inside of. Temporaries constructed in conditional
+  // branches of a full expression are destroyed conditionally.
+  int ConditionalDepth = 0;
 
   // Labels, and gotos to labels that have not been seen yet.
+  struct GotoData {
+    XIL_PPoint point;
+    ScopeChain chain;
+  };
   struct LabelData {
     XIL_PPoint point = 0;
-    std::vector<XIL_PPoint> gotos;
+    ScopeChain chain;
+    std::vector<GotoData> gotos;
   };
   llvm::DenseMap<const clang::LabelDecl*, LabelData> Labels;
 
@@ -178,6 +242,7 @@ private:
   XIL_Var TranslateParam(const clang::ParmVarDecl *pd);
   XIL_Var TranslateValueDecl(const clang::ValueDecl *d);
   XIL_Var GetReturnVar();
+  XIL_Exp ThisValue();
   XIL_Var NewTemporary(XIL_Type type);
   XIL_Var NewTemporary(clang::QualType type);
 
@@ -199,6 +264,20 @@ private:
   void TranslateLogical(Env &env, const clang::BinaryOperator *e);
   void TranslateConditional(Env &env, const clang::AbstractConditionalOperator *e);
   void TranslateCall(Env &env, const clang::CallExpr *e);
+  void TranslateMemberCall(Env &env, const clang::CallExpr *e,
+                           const clang::CXXMethodDecl *md, const clang::Expr *object,
+                           bool isArrow, bool qualified,
+                           llvm::ArrayRef<const clang::Expr*> args);
+  void TranslateConstruct(Env &env, const clang::CXXConstructExpr *e);
+  void TranslateMaterialize(Env &env, const clang::MaterializeTemporaryExpr *e);
+  void ZeroInitialize(XIL_PPoint *point, XIL_Exp target, clang::QualType type);
+  void TranslateBindTemporary(Env &env, const clang::CXXBindTemporaryExpr *e);
+  void TranslateFullExpr(Env &env, const clang::ExprWithCleanups *e);
+  void TranslateNew(Env &env, const clang::CXXNewExpr *e);
+  void TranslateDelete(Env &env, const clang::CXXDeleteExpr *e);
+  void TranslateMember(Env &env, const clang::MemberExpr *e);
+  void TranslateLambda(Env &env, const clang::LambdaExpr *e);
+  void InitializeCaptures(XIL_PPoint *point, const clang::CXXMethodDecl *md);
   void TranslateInitList(Env &env, const clang::InitListExpr *e);
   void TranslateStmtExpr(Env &env, const clang::StmtExpr *e);
   void TranslateVAArg(Env &env, const clang::VAArgExpr *e);
@@ -208,10 +287,55 @@ private:
                          const clang::Stmt *s);
   XIL_Exp MakeTruthValue(XIL_Exp value, clang::QualType type, bool nonzero);
 
+  // Calls.
+  struct CallResult {
+    XIL_Exp lval = nullptr;
+    bool done = false;
+  };
+  CallResult PrepareCallResult(Env &env, const clang::CallExpr *e);
+  void FinishCallResult(Env &env, const clang::CallExpr *e, const CallResult &result);
+  XIL_Exp CallArgument(const clang::Expr *arg, XIL_PPoint *point, bool reference);
+  std::vector<XIL_Exp> CallArguments(llvm::ArrayRef<const clang::Expr*> args,
+                                     XIL_PPoint *point,
+                                     const clang::FunctionProtoType *proto);
+  void AddCall(XIL_PPoint *point, XIL_Type type, XIL_Exp result, XIL_Exp instance,
+               XIL_Exp function, std::vector<XIL_Exp> &args,
+               XIL_Location loc = nullptr);
+  XIL_Field VirtualField(const clang::CXXRecordDecl *rd, const clang::CXXMethodDecl *md,
+                         clang::CXXDtorType dtorKind);
+
+  // Initialize an object of the given type with an expression: references
+  // are bound to the address of the expression, and C++ objects are
+  // constructed in place.
+  void InitializeObject(XIL_PPoint *point, PostEdges *post, XIL_Exp target,
+                        clang::QualType type, const clang::Expr *init,
+                        Env::Destroy destroy = Env::DestroyNone);
+
+  // Constructors, destructors and cleanups.
+  void AddDestructorCall(XIL_PPoint *point, XIL_Exp instance,
+                         const clang::CXXDestructorDecl *dtor, clang::CXXDtorType kind);
+  void AddOperatorDelete(XIL_PPoint *point, XIL_Exp pointer, clang::QualType type,
+                         const clang::FunctionDecl *opDelete);
+  XIL_Exp FirstElement(XIL_Exp object, clang::QualType *type);
+  void AddCleanup(XIL_PPoint *point, XIL_Exp instance, clang::QualType type,
+                  Env::Destroy destroy);
+  void EmitCleanup(XIL_PPoint *point, const Cleanup &cleanup);
+  void EmitCleanups(XIL_PPoint *point, Scope &scope, size_t begin, size_t end);
+  ScopeChain CurrentChain();
+  void TranslateCtorInitializers(XIL_PPoint *point, const clang::CXXConstructorDecl *ctor,
+                                 clang::CXXCtorType kind);
+  void TranslateDestructorEpilogue(XIL_PPoint *point, const clang::CXXDestructorDecl *dtor);
+  void ForwardToVariant(XIL_PPoint *point, clang::GlobalDecl target);
+
   // Statements.
   void TranslateStmt(XIL_PPoint *point, const clang::Stmt *s);
   void TranslateCompound(XIL_PPoint *point, const clang::CompoundStmt *s);
-  void TranslateDecl(XIL_PPoint *point, PostEdges *post, const clang::Decl *d);
+  void TranslateDecl(XIL_PPoint *point, PostEdges *post, const clang::Decl *d,
+                     bool destroy = true);
+  void TranslateDeclStmt(XIL_PPoint *point, PostEdges *post, const clang::Stmt *s);
+  void TranslateForRange(XIL_PPoint *point, const clang::CXXForRangeStmt *s);
+  void TranslateInitStmt(XIL_PPoint *point, const clang::Stmt *init);
+  void FinishScope(XIL_PPoint *point, Scope &scope);
   void TranslateReturn(XIL_PPoint *point, const clang::ReturnStmt *s);
   void TranslateIf(XIL_PPoint *point, const clang::IfStmt *s);
   void TranslateWhile(XIL_PPoint *point, const clang::WhileStmt *s);
@@ -221,10 +345,12 @@ private:
   void TranslateCase(XIL_PPoint *point, const clang::SwitchCase *s);
   void TranslateLabel(XIL_PPoint *point, const clang::LabelStmt *s);
   void TranslateGoto(XIL_PPoint *point, const clang::GotoStmt *s);
-  void ResolveGoto(XIL_PPoint source, XIL_PPoint target);
+  void ResolveGoto(XIL_PPoint source, XIL_PPoint target,
+                   const ScopeChain &sourceChain, const ScopeChain &targetChain);
   void ConnectPostPoint(XIL_PPoint *point, const PostEdges &post);
-  void PushScope(Scope &scope);
+  Scope &PushScope();
   void PopScope();
+  Scope &LanguageScope();
 };
 
 // State for a whole translation unit: type and name translation, which is
@@ -257,6 +383,7 @@ public:
   std::string GlobalVarName(const clang::VarDecl *vd);
   std::string SourceName(const clang::NamedDecl *d);
   XIL_Var FunctionVar(const clang::FunctionDecl *fd);
+  XIL_Var FunctionVar(clang::GlobalDecl gd);
   XIL_Var GlobalVar(const clang::VarDecl *vd);
   XIL_Var FuncNameVar(const clang::PredefinedExpr *pe,
                       const clang::FunctionDecl *fd);
@@ -317,6 +444,12 @@ private:
   const Layout &GetLayout(const clang::RecordDecl *rd);
   int FieldIndex(const clang::FieldDecl *fd);
   XIL_Field BaseField(const clang::RecordDecl *rd, const LayoutEntry &entry);
+
+public:
+  // The field for a base class subobject (direct or virtual) of a class.
+  XIL_Field BaseField(const clang::CXXRecordDecl *rd, const clang::CXXRecordDecl *base);
+
+private:
 
   // Virtual functions of a class, as computed by XIL_GetFunctionFields in
   // gcc/type.c. Destructors are represented by their complete and deleting

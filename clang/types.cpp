@@ -411,6 +411,20 @@ XIL_Field Translator::BaseField(const RecordDecl *rd, const LayoutEntry &entry)
                        XIL_MakeAnnotationList());
 }
 
+XIL_Field Translator::BaseField(const CXXRecordDecl *rd, const CXXRecordDecl *base)
+{
+  base = base->getCanonicalDecl();
+  for (const LayoutEntry &entry : GetLayout(rd).entries) {
+    if (entry.base && entry.base->getCanonicalDecl() == base)
+      return BaseField(rd, entry);
+  }
+
+  // Empty bases with no layout entry. This shouldn't happen.
+  std::string csu = RecordName(rd);
+  return XIL_MakeField("field:?", "field:?", csu.c_str(), TranslateRecordType(base), 0,
+                       XIL_MakeAnnotationList());
+}
+
 XIL_Type Translator::TranslateRecordType(const RecordDecl *rd)
 {
   std::string name = RecordName(rd);

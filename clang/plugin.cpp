@@ -148,9 +148,25 @@ void Translator::TranslateUnit()
       continue;
 
     if (const FunctionDecl *fd = dyn_cast<FunctionDecl>(d)) {
-      {
+      // Constructors and destructors have a block for each variant.
+      std::vector<GlobalDecl> variants;
+      if (const CXXConstructorDecl *ctor = dyn_cast<CXXConstructorDecl>(fd)) {
+        variants.push_back(GlobalDecl(ctor, Ctor_Base));
+        variants.push_back(GlobalDecl(ctor, Ctor_Complete));
+      }
+      else if (const CXXDestructorDecl *dtor = dyn_cast<CXXDestructorDecl>(fd)) {
+        variants.push_back(GlobalDecl(dtor, Dtor_Base));
+        variants.push_back(GlobalDecl(dtor, Dtor_Complete));
+        if (dtor->isVirtual())
+          variants.push_back(GlobalDecl(dtor, Dtor_Deleting));
+      }
+      else {
+        variants.push_back(GlobalDecl(fd));
+      }
+
+      for (GlobalDecl gd : variants) {
         BlockTranslator block(*this, fd);
-        block.GenerateFunction(fd);
+        block.GenerateFunction(gd);
       }
 
       std::vector<PendingFuncName> pending;

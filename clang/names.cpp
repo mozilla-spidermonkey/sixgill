@@ -119,6 +119,13 @@ XIL_Var Translator::FunctionVar(const FunctionDecl *fd)
   return XIL_VarFunc(name.c_str(), source.c_str());
 }
 
+XIL_Var Translator::FunctionVar(GlobalDecl gd)
+{
+  std::string name = FunctionName(gd);
+  std::string source = SourceName(cast<FunctionDecl>(gd.getDecl()));
+  return XIL_VarFunc(name.c_str(), source.c_str());
+}
+
 XIL_Var Translator::GlobalVar(const VarDecl *vd)
 {
   std::string name = GlobalVarName(vd);

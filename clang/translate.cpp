@@ -240,6 +240,19 @@ XIL_Var BlockTranslator::GetReturnVar()
   return ReturnVar;
 }
 
+// The value of 'this', a pointer to the object. In a lambda, this is the
+// captured 'this' of the enclosing method.
+XIL_Exp BlockTranslator::ThisValue()
+{
+  XIL_Exp value = XIL_ExpDrf(XIL_ExpVar(XIL_VarThis()));
+  if (ThisCapture) {
+    XIL_Exp field = XIL_ExpFld(value, T.TranslateField(ThisCapture));
+    // [*this] captures a copy of the object.
+    value = ThisCapture->getType()->isPointerType() ? XIL_ExpDrf(field) : field;
+  }
+  return value;
+}
+
 XIL_Var BlockTranslator::NewTemporary(XIL_Type type)
 {
   TempCount++;
@@ -456,12 +469,21 @@ void BlockTranslator::TranslateExprInner(Env &env, const Expr *e)
     return;
 
   case Stmt::ConstantExprClass:
-  case Stmt::ExprWithCleanupsClass:
     TranslateExpr(env, cast<FullExpr>(e)->getSubExpr());
+    return;
+
+  case Stmt::ExprWithCleanupsClass:
+    TranslateFullExpr(env, cast<ExprWithCleanups>(e));
     return;
 
   case Stmt::ImplicitCastExprClass:
   case Stmt::CStyleCastExprClass:
+  case Stmt::CXXStaticCastExprClass:
+  case Stmt::CXXFunctionalCastExprClass:
+  case Stmt::CXXReinterpretCastExprClass:
+  case Stmt::CXXConstCastExprClass:
+  case Stmt::CXXDynamicCastExprClass:
+  case Stmt::BuiltinBitCastExprClass:
     TranslateCast(env, cast<CastExpr>(e));
     return;
 
@@ -474,6 +496,14 @@ void BlockTranslator::TranslateExprInner(Env &env, const Expr *e)
       return;
     }
 
+    // Structured bindings refer to part of the decomposed object.
+    if (const BindingDecl *bd = dyn_cast<BindingDecl>(d)) {
+      if (const Expr *binding = bd->getBinding()) {
+        TranslateExpr(env, binding);
+        return;
+      }
+    }
+
     XIL_Var var = TranslateValueDecl(d);
     if (!var) {
       UnexpectedResult(env, "declaration reference", e);
@@ -482,13 +512,168 @@ void BlockTranslator::TranslateExprInner(Env &env, const Expr *e)
 
     XIL_Exp result = XIL_ExpDrf(XIL_ExpVar(var));
 
-    // Variable length arrays are pointers, so need an extra dereference.
-    if (d->getType()->isVariableArrayType())
+    // Variable length arrays are pointers, and references are pointers to
+    // the referenced object, so these need an extra dereference.
+    if (d->getType()->isVariableArrayType() || d->getType()->isReferenceType())
+      result = XIL_ExpDrf(result);
+    else if (const VarDecl *vd = dyn_cast<VarDecl>(d); vd && ReferenceCaptures.count(vd))
       result = XIL_ExpDrf(result);
 
     ProcessResult(env, result);
     return;
   }
+
+  case Stmt::CXXThisExprClass:
+    ProcessResult(env, ThisValue());
+    return;
+
+  case Stmt::CXXBoolLiteralExprClass:
+    ProcessResult(env, XIL_ExpInt(cast<CXXBoolLiteralExpr>(e)->getValue() ? 1 : 0));
+    return;
+
+  case Stmt::CXXNullPtrLiteralExprClass:
+  case Stmt::GNUNullExprClass:
+    ProcessResult(env, XIL_ExpInt(0));
+    return;
+
+  case Stmt::CXXScalarValueInitExprClass:
+    if (e->getType()->isRealFloatingType())
+      ProcessResult(env, XIL_ExpFloat("0.0e+0"));
+    else if (!e->getType()->isVoidType())
+      ProcessResult(env, XIL_ExpInt(0));
+    else if (env.used())
+      ProcessResult(env, XIL_ExpEmpty());
+    return;
+
+  case Stmt::CXXDefaultArgExprClass:
+    TranslateExpr(env, cast<CXXDefaultArgExpr>(e)->getExpr());
+    return;
+
+  case Stmt::CXXDefaultInitExprClass:
+    TranslateExpr(env, cast<CXXDefaultInitExpr>(e)->getExpr());
+    return;
+
+  case Stmt::SubstNonTypeTemplateParmExprClass:
+    TranslateExpr(env, cast<SubstNonTypeTemplateParmExpr>(e)->getReplacement());
+    return;
+
+  case Stmt::CXXRewrittenBinaryOperatorClass:
+    TranslateExpr(env, cast<CXXRewrittenBinaryOperator>(e)->getSemanticForm());
+    return;
+
+  case Stmt::CXXMemberCallExprClass:
+  case Stmt::CXXOperatorCallExprClass:
+  case Stmt::UserDefinedLiteralClass:
+    TranslateCall(env, cast<CallExpr>(e));
+    return;
+
+  case Stmt::CXXConstructExprClass:
+  case Stmt::CXXTemporaryObjectExprClass:
+    TranslateConstruct(env, cast<CXXConstructExpr>(e));
+    return;
+
+  case Stmt::MaterializeTemporaryExprClass:
+    TranslateMaterialize(env, cast<MaterializeTemporaryExpr>(e));
+    return;
+
+  case Stmt::CXXBindTemporaryExprClass:
+    TranslateBindTemporary(env, cast<CXXBindTemporaryExpr>(e));
+    return;
+
+  case Stmt::CXXNewExprClass:
+    TranslateNew(env, cast<CXXNewExpr>(e));
+    return;
+
+  case Stmt::CXXDeleteExprClass:
+    TranslateDelete(env, cast<CXXDeleteExpr>(e));
+    return;
+
+  case Stmt::ArrayInitLoopExprClass:
+    // Copies of arrays in implicit copy constructors and lambda captures.
+    // Treat these as a copy of the whole array.
+    TranslateExpr(env, cast<ArrayInitLoopExpr>(e)->getCommonExpr());
+    return;
+
+  case Stmt::LambdaExprClass:
+    TranslateLambda(env, cast<LambdaExpr>(e));
+    return;
+
+  case Stmt::CXXInheritedCtorInitExprClass: {
+    // The base class initializer of an inheriting constructor, which passes
+    // on the constructor's arguments.
+    const CXXInheritedCtorInitExpr *ie = cast<CXXInheritedCtorInitExpr>(e);
+    XIL_Location loc = UpdateLocation(*env.point, e);
+    const CXXConstructorDecl *ctor = ie->getConstructor();
+    XIL_Exp object = env.assign ? env.assign : XIL_ExpVar(NewTemporary(e->getType()));
+    std::vector<XIL_Exp> args;
+    if (Func) {
+      for (const ParmVarDecl *pd : Func->parameters())
+        args.push_back(XIL_ExpDrf(XIL_ExpVar(TranslateParam(pd))));
+    }
+    CXXCtorType kind = env.baseSubobject ? Ctor_Base : Ctor_Complete;
+    XIL_Exp function = XIL_ExpVar(T.FunctionVar(GlobalDecl(ctor, kind)));
+    AddCall(env.point, T.TranslateMethodType(ctor), nullptr, object, function, args, loc);
+    if (env.assign)
+      env.processed = true;
+    else
+      ProcessResult(env, XIL_ExpDrf(object));
+    return;
+  }
+
+  case Stmt::AtomicExprClass: {
+    // Atomic builtins are calls to a function named after the builtin, as
+    // with gcc.
+    const AtomicExpr *ae = cast<AtomicExpr>(e);
+    XIL_Location loc = UpdateLocation(*env.point, e);
+    std::vector<const Expr*> operands = { ae->getPtr() };
+    unsigned count = ae->getNumSubExprs();
+    if (count > 2)
+      operands.push_back(ae->getVal1());
+    if (count > 4)
+      operands.push_back(ae->getVal2());
+    if (count > 5)
+      operands.push_back(ae->getWeak());
+    operands.push_back(ae->getOrder());
+    if (count > 3)
+      operands.push_back(ae->getOrderFail());
+
+    std::vector<XIL_Exp> args;
+    std::vector<XIL_Type> argTypes;
+    for (const Expr *operand : operands) {
+      args.push_back(RValue(operand, env.point));
+      argTypes.push_back(T.TranslateType(operand->getType()));
+    }
+
+    XIL_Type type = XIL_TypeFunction(T.TranslateType(e->getType()), nullptr, 0,
+                                     argTypes.data(), nullptr, (int) argTypes.size(),
+                                     XIL_MakeAnnotationList());
+    std::string name = ae->getOpAsString().str();
+    XIL_Exp function = XIL_ExpVar(XIL_VarFunc(name.c_str(), name.c_str()));
+
+    XIL_Exp result = nullptr;
+    if (env.used() && !e->getType()->isVoidType())
+      result = XIL_ExpVar(NewTemporary(e->getType()));
+    AddCall(env.point, type, result, nullptr, function, args, loc);
+    if (result)
+      ProcessResult(env, XIL_ExpDrf(result));
+    else if (env.used())
+      ProcessResult(env, XIL_ExpEmpty());
+    return;
+  }
+
+  case Stmt::ShuffleVectorExprClass:
+  case Stmt::ConvertVectorExprClass:
+  case Stmt::ExtVectorElementExprClass:
+    // Vector types are not handled, as with gcc.
+    BogusResult(env);
+    return;
+
+  case Stmt::CXXParenListInitExprClass:
+  case Stmt::CXXStdInitializerListExprClass:
+  case Stmt::CXXTypeidExprClass:
+  case Stmt::CXXPseudoDestructorExprClass:
+    BogusResult(env);
+    return;
 
   case Stmt::IntegerLiteralClass: {
     const IntegerLiteral *il = cast<IntegerLiteral>(e);
@@ -543,21 +728,9 @@ void BlockTranslator::TranslateExprInner(Env &env, const Expr *e)
     TranslateCall(env, cast<CallExpr>(e));
     return;
 
-  case Stmt::MemberExprClass: {
-    const MemberExpr *me = cast<MemberExpr>(e);
-    const FieldDecl *fd = dyn_cast<FieldDecl>(me->getMemberDecl());
-    if (!fd) {
-      UnexpectedResult(env, "member", e);
-      return;
-    }
-
-    XIL_Exp base = me->isArrow()
-      ? RValue(me->getBase(), env.point, env.post)
-      : LValue(me->getBase(), env.point, env.post);
-    XIL_Field field = T.TranslateField(fd);
-    ProcessResult(env, XIL_ExpDrf(XIL_ExpFld(base, field)));
+  case Stmt::MemberExprClass:
+    TranslateMember(env, cast<MemberExpr>(e));
     return;
-  }
 
   case Stmt::ArraySubscriptExprClass: {
     const ArraySubscriptExpr *ae = cast<ArraySubscriptExpr>(e);
@@ -708,6 +881,61 @@ void BlockTranslator::TranslateCast(Env &env, const CastExpr *e)
     Env subEnv(env.point, env.post);
     TranslateExpr(subEnv, sub);
     ProcessResult(env, XIL_ExpEmpty());
+    return;
+  }
+
+  case CK_NullToPointer:
+  case CK_NullToMemberPointer: {
+    Env subEnv(env.point, env.post);
+    TranslateExpr(subEnv, sub);
+    ProcessResult(env, XIL_ExpInt(0));
+    return;
+  }
+
+  case CK_DerivedToBase:
+  case CK_UncheckedDerivedToBase:
+  case CK_BaseToDerived: {
+    // Conversions between classes and their bases access the base class
+    // subobject fields, with each step in the path to the base.
+    bool toBase = (e->getCastKind() != CK_BaseToDerived);
+    QualType derivedType = toBase ? sub->getType() : e->getType();
+    if (const clang::PointerType *pt = derivedType->getAs<clang::PointerType>())
+      derivedType = pt->getPointeeType();
+    const CXXRecordDecl *rd = derivedType->getAsCXXRecordDecl();
+    if (!rd) {
+      TranslateExpr(env, sub);
+      return;
+    }
+
+    std::vector<XIL_Field> fields;
+    for (const CXXBaseSpecifier *spec : e->path()) {
+      const CXXRecordDecl *base = spec->getType()->getAsCXXRecordDecl();
+      if (!base)
+        break;
+      fields.push_back(T.BaseField(rd, base));
+      rd = base;
+    }
+
+    // The value of a pointer is the address of the object it points to, so
+    // these are the same for pointers and lvalues.
+    bool isPointer = sub->isPRValue();
+    if (!isPointer && !env.used()) {
+      Env subEnv(env.point, env.post);
+      TranslateExpr(subEnv, sub);
+      return;
+    }
+    XIL_Exp object = isPointer
+      ? RValue(sub, env.point, env.post)
+      : LValue(sub, env.point, env.post);
+    if (toBase) {
+      for (XIL_Field field : fields)
+        object = XIL_ExpFld(object, field);
+    }
+    else {
+      for (auto it = fields.rbegin(); it != fields.rend(); ++it)
+        object = XIL_ExpRfld(object, *it);
+    }
+    ProcessResult(env, isPointer ? object : XIL_ExpDrf(object));
     return;
   }
 
@@ -1178,7 +1406,9 @@ void BlockTranslator::TranslateLogical(Env &env, const BinaryOperator *e)
 
   Branch(e->getLHS(), env.point,
          isAnd ? midPoint : truePoint, isAnd ? falsePoint : midPoint);
+  ConditionalDepth++;
   Branch(e->getRHS(), &midPoint, truePoint, falsePoint);
+  ConditionalDepth--;
 
   *env.point = joinPoint;
   env.processed = true;
@@ -1188,15 +1418,14 @@ void BlockTranslator::TranslateConditional(Env &env, const AbstractConditionalOp
 {
   XIL_Location loc = UpdateLocation(*env.point, e);
 
-  if (env.lval) {
-    UnexpectedResult(env, "lvalue of conditional operator", e);
-    return;
-  }
-
   // For the GNU x ?: y operator, evaluate x once and use it for both the
   // condition and the true value.
   if (const BinaryConditionalOperator *bco = dyn_cast<BinaryConditionalOperator>(e)) {
-    XIL_Exp common = RValue(bco->getCommon(), env.point);
+    XIL_Exp common = e->getType()->isRecordType() || e->isGLValue()
+      ? LValue(bco->getCommon(), env.point)
+      : RValue(bco->getCommon(), env.point);
+    if (e->getType()->isRecordType() || e->isGLValue())
+      common = XIL_ExpDrf(common);
     SavedValues[bco->getOpaqueValue()] = common;
   }
 
@@ -1204,9 +1433,28 @@ void BlockTranslator::TranslateConditional(Env &env, const AbstractConditionalOp
   XIL_PPoint falsePoint = AddPoint(loc);
   Branch(e->getCond(), env.point, truePoint, falsePoint);
 
+  ConditionalDepth++;
   if (env.branch) {
     Branch(e->getTrueExpr(), &truePoint, env.truePoint, env.falsePoint);
     Branch(e->getFalseExpr(), &falsePoint, env.truePoint, env.falsePoint);
+  }
+  else if (env.lval) {
+    // Store the address of whichever operand is chosen in a temporary.
+    QualType pointerType = Ctx.getPointerType(e->getType());
+    XIL_Type type = T.TranslateType(pointerType);
+    XIL_Exp temp = XIL_ExpVar(NewTemporary(type));
+    *env.lval = XIL_ExpDrf(temp);
+    env.processed = true;
+
+    for (auto [point, operand] : { std::make_pair(&truePoint, e->getTrueExpr()),
+                                   std::make_pair(&falsePoint, e->getFalseExpr()) }) {
+      XIL_Exp address = LValue(operand, point);
+      if (*point) {
+        XIL_PPoint after = AddPoint(loc);
+        XIL_CFGEdgeAssign(*point, after, type, temp, address);
+        *point = after;
+      }
+    }
   }
   else {
     Env trueEnv(&truePoint);
@@ -1215,6 +1463,7 @@ void BlockTranslator::TranslateConditional(Env &env, const AbstractConditionalOp
     if (env.assign) {
       trueEnv.assign = falseEnv.assign = env.assign;
       trueEnv.assignType = falseEnv.assignType = env.assignType;
+      trueEnv.destroyAssign = falseEnv.destroyAssign = env.destroyAssign;
     }
     else if (env.rval) {
       XIL_Type type = T.TranslateType(e->getType());
@@ -1222,11 +1471,16 @@ void BlockTranslator::TranslateConditional(Env &env, const AbstractConditionalOp
       *env.rval = XIL_ExpDrf(temp);
       trueEnv.assign = falseEnv.assign = temp;
       trueEnv.assignType = falseEnv.assignType = type;
+
+      // A C++ object constructed in the temporary needs to be destroyed.
+      if (e->getType()->isRecordType())
+        trueEnv.destroyAssign = falseEnv.destroyAssign = Env::DestroyFullExpr;
     }
 
     TranslateExpr(trueEnv, e->getTrueExpr());
     TranslateExpr(falseEnv, e->getFalseExpr());
   }
+  ConditionalDepth--;
 
   if (truePoint || falsePoint) {
     XIL_PPoint joinPoint = AddPoint(loc);
@@ -1241,50 +1495,850 @@ void BlockTranslator::TranslateConditional(Env &env, const AbstractConditionalOp
   env.processed = true;
 }
 
-void BlockTranslator::TranslateCall(Env &env, const CallExpr *e)
+// Get where to put the result of a call: directly into the assigned lvalue if
+// there is one, otherwise a temporary. A call returning a reference stores
+// the address of the result.
+BlockTranslator::CallResult BlockTranslator::PrepareCallResult(Env &env, const CallExpr *e)
 {
-  XIL_Location loc = UpdateLocation(*env.point, e);
-
-  QualType calleeType = e->getCallee()->getType().getCanonicalType();
-  if (calleeType->isPointerType())
-    calleeType = calleeType->getPointeeType();
-  if (!calleeType->isFunctionType()) {
-    UnexpectedResult(env, "call", e);
-    return;
+  CallResult result;
+  if (!env.used())
+    return result;
+  if (env.assign && e->isPRValue()) {
+    result.lval = env.assign;
+    result.done = true;
+    return result;
   }
-  XIL_Type funcType = T.TranslateFunctionType(calleeType);
+  result.lval = XIL_ExpVar(NewTemporary(e->getCallReturnType(Ctx)));
+  return result;
+}
 
-  // Where to put the result of the call.
-  XIL_Exp resultLval = nullptr;
-  bool resultDone = false;
-
-  if (env.used()) {
-    if (env.assign) {
-      resultLval = env.assign;
-      resultDone = true;
-    }
-    else {
-      resultLval = XIL_ExpVar(NewTemporary(e->getType()));
-    }
-  }
-
-  std::vector<XIL_Exp> args;
-  for (const Expr *arg : e->arguments())
-    args.push_back(RValue(arg, env.point));
-
-  XIL_Exp function = RValue(e->getCallee(), env.point);
-
-  XIL_PPoint after = AddPoint(loc);
-  XIL_CFGEdgeCall(*env.point, after, funcType, resultLval, nullptr, function,
-                  args.data(), (int) args.size());
-  *env.point = after;
-
-  if (resultDone) {
+void BlockTranslator::FinishCallResult(Env &env, const CallExpr *e, const CallResult &result)
+{
+  if (result.done) {
     env.processed = true;
     return;
   }
-  if (resultLval)
-    ProcessResult(env, XIL_ExpDrf(resultLval));
+  if (!result.lval)
+    return;
+  XIL_Exp value = XIL_ExpDrf(result.lval);
+  if (e->isGLValue())
+    value = XIL_ExpDrf(value);
+  ProcessResult(env, value);
+}
+
+// Arguments bound to reference parameters are passed by address.
+XIL_Exp BlockTranslator::CallArgument(const Expr *arg, XIL_PPoint *point, bool reference)
+{
+  if (reference && arg->isGLValue())
+    return LValue(arg, point);
+  return RValue(arg, point);
+}
+
+std::vector<XIL_Exp> BlockTranslator::CallArguments(llvm::ArrayRef<const Expr*> args,
+                                                    XIL_PPoint *point,
+                                                    const FunctionProtoType *proto)
+{
+  std::vector<XIL_Exp> result;
+  for (size_t i = 0; i < args.size(); i++) {
+    bool reference = proto && i < proto->getNumParams() &&
+      proto->getParamType(i)->isReferenceType();
+    result.push_back(CallArgument(args[i], point, reference));
+  }
+  return result;
+}
+
+void BlockTranslator::AddCall(XIL_PPoint *point, XIL_Type type, XIL_Exp result,
+                              XIL_Exp instance, XIL_Exp function,
+                              std::vector<XIL_Exp> &args, XIL_Location loc)
+{
+  if (!*point)
+    return;
+  XIL_PPoint after = AddPoint(loc ? loc : XIL_CFGGetPointLocation(*point));
+  XIL_CFGEdgeCall(*point, after, type, result, instance, function,
+                  args.data(), (int) args.size());
+  *point = after;
+}
+
+void BlockTranslator::TranslateCall(Env &env, const CallExpr *e)
+{
+  const Expr *callee = e->getCallee()->IgnoreParens();
+
+  if (const CXXMemberCallExpr *mce = dyn_cast<CXXMemberCallExpr>(e)) {
+    if (const MemberExpr *me = dyn_cast<MemberExpr>(callee)) {
+      const CXXMethodDecl *md = cast<CXXMethodDecl>(me->getMemberDecl());
+      llvm::ArrayRef<const Expr*> args(mce->getArgs(), mce->getNumArgs());
+      TranslateMemberCall(env, e, md, me->getBase(), me->isArrow(),
+                          me->hasQualifier(), args);
+      return;
+    }
+  }
+
+  if (const CXXOperatorCallExpr *oce = dyn_cast<CXXOperatorCallExpr>(e)) {
+    const CXXMethodDecl *md = dyn_cast_or_null<CXXMethodDecl>(oce->getCalleeDecl());
+    if (md && md->isInstance() && oce->getNumArgs() >= 1) {
+      llvm::ArrayRef<const Expr*> args(oce->getArgs() + 1, oce->getNumArgs() - 1);
+      TranslateMemberCall(env, e, md, oce->getArg(0), false, false, args);
+      return;
+    }
+  }
+
+  // Calling a pseudo destructor (p->~int()) does nothing.
+  if (isa<CXXPseudoDestructorExpr>(callee)) {
+    if (env.used())
+      ProcessResult(env, XIL_ExpEmpty());
+    return;
+  }
+
+  XIL_Location loc = UpdateLocation(*env.point, e);
+
+  QualType calleeType = callee->getType().getCanonicalType();
+  if (calleeType->isPointerType())
+    calleeType = calleeType->getPointeeType();
+  if (const MemberPointerType *mpt = calleeType->getAs<MemberPointerType>())
+    calleeType = mpt->getPointeeType().getCanonicalType();
+  if (!calleeType->isFunctionType()) {
+    // Calls through pointers to members have callees with a special bound
+    // member function type.
+    const BinaryOperator *bo = dyn_cast<BinaryOperator>(callee);
+    if (bo && bo->isPtrMemOp()) {
+      calleeType = bo->getRHS()->getType()->getAs<MemberPointerType>()->getPointeeType();
+    }
+    else {
+      UnexpectedResult(env, "call", e);
+      return;
+    }
+  }
+  XIL_Type funcType = T.TranslateFunctionType(calleeType);
+
+  CallResult result = PrepareCallResult(env, e);
+
+  std::vector<XIL_Exp> args =
+    CallArguments(llvm::ArrayRef<const Expr*>(e->getArgs(), e->getNumArgs()), env.point,
+                  calleeType->getAs<FunctionProtoType>());
+
+  XIL_Exp function;
+  XIL_Exp instance = nullptr;
+  if (const BinaryOperator *bo = dyn_cast<BinaryOperator>(callee); bo && bo->isPtrMemOp()) {
+    // Calls through pointers to member functions are not handled, as with
+    // gcc. Use a bogus function.
+    instance = bo->getOpcode() == BO_PtrMemI
+      ? RValue(bo->getLHS(), env.point)
+      : LValue(bo->getLHS(), env.point);
+    RValue(bo->getRHS(), env.point);
+    function = XIL_ExpDrf(XIL_ExpVar(XIL_VarGlob("error", "error")));
+  }
+  else if (const MemberExpr *me = dyn_cast<MemberExpr>(callee);
+           me && isa<FunctionDecl>(me->getMemberDecl())) {
+    // Static method called with member syntax (x.f()).
+    Env baseEnv(env.point);
+    TranslateExpr(baseEnv, me->getBase());
+    function = XIL_ExpVar(T.FunctionVar(cast<FunctionDecl>(me->getMemberDecl())));
+  }
+  else {
+    function = RValue(e->getCallee(), env.point);
+  }
+
+  AddCall(env.point, funcType, result.lval, instance, function, args, loc);
+  FinishCallResult(env, e, result);
+}
+
+// Find the field of a class for a virtual method, as gcc does from the vtable
+// index of a virtual call.
+XIL_Field BlockTranslator::VirtualField(const CXXRecordDecl *rd, const CXXMethodDecl *md,
+                                        CXXDtorType dtorKind)
+{
+  if (rd && rd->hasDefinition()) {
+    bool isDtor = isa<CXXDestructorDecl>(md);
+    for (const Translator::VirtualFunction &function : T.GetVirtualFunctions(rd)) {
+      bool matches = isDtor
+        ? isa<CXXDestructorDecl>(function.decl) && function.dtorKind == dtorKind
+        : function.decl->getCanonicalDecl() == md->getCanonicalDecl();
+      if (matches)
+        return T.MethodField(function.fieldMethod, function.dtorKind);
+    }
+  }
+  return T.MethodField(md, dtorKind);
+}
+
+void BlockTranslator::TranslateMemberCall(Env &env, const CallExpr *e,
+                                          const CXXMethodDecl *md, const Expr *object,
+                                          bool isArrow, bool qualified,
+                                          llvm::ArrayRef<const Expr*> args)
+{
+  XIL_Location loc = UpdateLocation(*env.point, e);
+
+  CallResult result = PrepareCallResult(env, e);
+
+  // The object to call the method on, which is an lvalue (the address of the
+  // object, as in x.f()) or a pointer value (as in p->f()).
+  XIL_Exp instance = isArrow
+    ? RValue(object, env.point)
+    : LValue(object, env.point);
+
+  std::vector<XIL_Exp> xargs =
+    CallArguments(args, env.point, md->getType()->getAs<FunctionProtoType>());
+
+  // Virtual calls go through the method's field in the class of the object,
+  // unless clang's code generator can resolve the call.
+  const CXXMethodDecl *target = md;
+  bool isVirtual = md->isVirtual() && !qualified;
+  if (isVirtual) {
+    if (const CXXMethodDecl *devirtualized = md->getDevirtualizedMethod(object, false)) {
+      target = devirtualized;
+      isVirtual = false;
+    }
+  }
+
+  const CXXDestructorDecl *dtor = dyn_cast<CXXDestructorDecl>(target);
+  XIL_Exp function;
+  if (isVirtual) {
+    QualType objectType = object->getType();
+    if (isArrow)
+      objectType = objectType->getPointeeType();
+    XIL_Field field = VirtualField(objectType->getAsCXXRecordDecl(), md, Dtor_Complete);
+    function = XIL_ExpDrf(XIL_ExpFld(XIL_ExpEmpty(), field));
+  }
+  else if (dtor) {
+    function = XIL_ExpVar(T.FunctionVar(GlobalDecl(dtor, Dtor_Complete)));
+  }
+  else {
+    function = XIL_ExpVar(T.FunctionVar(target));
+  }
+
+  AddCall(env.point, T.TranslateMethodType(md), result.lval, instance, function, xargs, loc);
+  FinishCallResult(env, e, result);
+}
+
+/////////////////////////////////////////////////////////////////////
+// C++ objects
+/////////////////////////////////////////////////////////////////////
+
+void BlockTranslator::InitializeObject(XIL_PPoint *point, PostEdges *post, XIL_Exp target,
+                                       QualType type, const Expr *init,
+                                       Env::Destroy destroy)
+{
+  if (type->isReferenceType()) {
+    XIL_Exp address = LValue(init, point, post);
+    if (*point) {
+      XIL_PPoint after = AddPoint(XIL_CFGGetPointLocation(*point));
+      XIL_CFGEdgeAssign(*point, after, T.TranslateType(type), target, address);
+      *point = after;
+    }
+    return;
+  }
+
+  Env env(point, post);
+  env.assign = target;
+  env.assignType = T.TranslateType(type);
+  env.destroyAssign = destroy;
+  TranslateExpr(env, init);
+}
+
+void BlockTranslator::TranslateMember(Env &env, const MemberExpr *me)
+{
+  const ValueDecl *member = me->getMemberDecl();
+
+  // Static data members and enumerators are not part of the object.
+  if (!isa<FieldDecl>(member) && !isa<IndirectFieldDecl>(member)) {
+    Env baseEnv(env.point, env.post);
+    TranslateExpr(baseEnv, me->getBase());
+    if (const EnumConstantDecl *ecd = dyn_cast<EnumConstantDecl>(member)) {
+      std::string str = IntegerString(ecd->getInitVal());
+      ProcessResult(env, XIL_ExpIntStr(str.c_str()));
+      return;
+    }
+    if (const FunctionDecl *fd = dyn_cast<FunctionDecl>(member)) {
+      // Static methods named with member syntax.
+      ProcessResult(env, XIL_ExpDrf(XIL_ExpVar(T.FunctionVar(fd))));
+      return;
+    }
+    if (const VarDecl *vd = dyn_cast<VarDecl>(member)) {
+      XIL_Exp result = XIL_ExpDrf(XIL_ExpVar(T.GlobalVar(vd)));
+      if (vd->getType()->isReferenceType())
+        result = XIL_ExpDrf(result);
+      ProcessResult(env, result);
+      return;
+    }
+    UnexpectedResult(env, "member", me);
+    return;
+  }
+
+  XIL_Exp base = me->isArrow()
+    ? RValue(me->getBase(), env.point, env.post)
+    : LValue(me->getBase(), env.point, env.post);
+
+  XIL_Exp result = base;
+  if (const IndirectFieldDecl *ifd = dyn_cast<IndirectFieldDecl>(member)) {
+    for (const NamedDecl *nd : ifd->chain())
+      result = XIL_ExpFld(result, T.TranslateField(cast<FieldDecl>(nd)));
+  }
+  else {
+    result = XIL_ExpFld(result, T.TranslateField(cast<FieldDecl>(member)));
+  }
+
+  result = XIL_ExpDrf(result);
+  if (member->getType()->isReferenceType())
+    result = XIL_ExpDrf(result);
+  ProcessResult(env, result);
+}
+
+// A lambda constructs its closure object by initializing a field for each
+// captured variable, as gcc does.
+void BlockTranslator::TranslateLambda(Env &env, const LambdaExpr *e)
+{
+  UpdateLocation(*env.point, e);
+
+  XIL_Exp object = env.assign;
+  if (!object)
+    object = XIL_ExpVar(NewTemporary(e->getType()));
+
+  const CXXRecordDecl *rd = e->getLambdaClass();
+  auto field = rd->field_begin();
+  for (const Expr *init : e->capture_inits()) {
+    if (field == rd->field_end())
+      break;
+    if (init) {
+      XIL_Exp target = XIL_ExpFld(object, T.TranslateField(*field));
+      InitializeObject(env.point, nullptr, target, field->getType(), init);
+    }
+    ++field;
+  }
+
+  if (env.assign)
+    env.processed = true;
+  else
+    ProcessResult(env, XIL_ExpDrf(object));
+}
+
+// At the start of a lambda's body, initialize locals for the captured
+// variables from the closure's fields.
+void BlockTranslator::InitializeCaptures(XIL_PPoint *point, const CXXMethodDecl *md)
+{
+  const CXXRecordDecl *rd = md->getParent();
+  llvm::DenseMap<const ValueDecl*, FieldDecl*> captures;
+  FieldDecl *thisField = nullptr;
+  rd->getCaptureFields(captures, thisField);
+
+  XIL_Exp closure = XIL_ExpDrf(XIL_ExpVar(XIL_VarThis()));
+
+  // Initialize in field order, so the output doesn't depend on hashing.
+  for (const FieldDecl *fd : rd->fields()) {
+    const VarDecl *vd = nullptr;
+    for (const auto &entry : captures) {
+      if (entry.second == fd)
+        vd = dyn_cast<VarDecl>(entry.first);
+    }
+    if (!vd)
+      continue;
+
+    bool byReference = fd->getType()->isReferenceType();
+    if (byReference && !vd->getType()->isReferenceType())
+      ReferenceCaptures.insert(vd);
+
+    // The local has the type of the field: a reference for by-reference
+    // captures.
+    std::string source = vd->getName().str();
+    int &count = LocalNameCounts[source];
+    std::string name = count ? source + ":" + std::to_string(count) : source;
+    count++;
+    XIL_Var var = XIL_VarLocal(name.c_str(), source.c_str());
+    XIL_Type type = T.TranslateType(fd->getType());
+    XIL_CFGAddVar(var, type, 0);
+    Locals[vd] = var;
+
+    XIL_Exp value = XIL_ExpDrf(XIL_ExpFld(closure, T.TranslateField(fd)));
+    XIL_PPoint after = AddPoint(XIL_CFGGetPointLocation(*point));
+    XIL_CFGEdgeAssign(*point, after, type, XIL_ExpVar(var), value);
+    *point = after;
+  }
+
+  ThisCapture = thisField;
+}
+
+void BlockTranslator::TranslateConstruct(Env &env, const CXXConstructExpr *e)
+{
+  XIL_Location loc = UpdateLocation(*env.point, e);
+  const CXXConstructorDecl *ctor = e->getConstructor();
+  QualType type = e->getType();
+
+  // Elided copies construct the copied temporary directly.
+  if (e->isElidable() && e->getNumArgs() >= 1) {
+    const Expr *arg = e->getArg(0)->IgnoreParenNoopCasts(Ctx);
+    if (const MaterializeTemporaryExpr *mte = dyn_cast<MaterializeTemporaryExpr>(arg)) {
+      TranslateExpr(env, mte->getSubExpr());
+      return;
+    }
+  }
+
+  if (ctor->isTrivial() && ctor->isCopyOrMoveConstructor() && e->getNumArgs() >= 1) {
+    // Trivial copies are assignments.
+    TranslateExpr(env, e->getArg(0));
+    return;
+  }
+
+  // Construct the object in place if it is being assigned somewhere, or in a
+  // new temporary otherwise.
+  XIL_Exp object = env.assign;
+  if (!object && (env.used() || !ctor->isTrivial()))
+    object = XIL_ExpVar(NewTemporary(type));
+
+  // Value initialization zeroes the object before any constructor runs.
+  if (object && e->requiresZeroInitialization())
+    ZeroInitialize(env.point, object, type);
+
+  // Trivial default constructors do nothing.
+  if (ctor->isTrivial()) {
+    if (env.assign)
+      env.processed = true;
+    else if (env.used())
+      ProcessResult(env, XIL_ExpDrf(object));
+    return;
+  }
+
+  // Constructing an array calls the constructor on each element. Treat this
+  // as a single call on the first element.
+  QualType elementType = type;
+  XIL_Exp instance = FirstElement(object, &elementType);
+
+  std::vector<XIL_Exp> args =
+    CallArguments(llvm::ArrayRef<const Expr*>(e->getArgs(), e->getNumArgs()), env.point,
+                  ctor->getType()->getAs<FunctionProtoType>());
+
+  CXXCtorType kind = env.baseSubobject ? Ctor_Base : Ctor_Complete;
+  XIL_Exp function = XIL_ExpVar(T.FunctionVar(GlobalDecl(ctor, kind)));
+
+  AddCall(env.point, T.TranslateMethodType(ctor), nullptr, instance, function, args, loc);
+
+  if (env.assign)
+    env.processed = true;
+  else
+    ProcessResult(env, XIL_ExpDrf(object));
+}
+
+// Assign zero to every scalar in an object, as gcc does for value
+// initialization. As with gcc, at most 100 elements of an array are assigned.
+void BlockTranslator::ZeroInitialize(XIL_PPoint *point, XIL_Exp target, QualType type)
+{
+  if (!*point)
+    return;
+  type = type.getCanonicalType();
+
+  if (type->isScalarType()) {
+    XIL_Exp zero = type->isRealFloatingType() ? XIL_ExpFloat("0.0e+0") : XIL_ExpInt(0);
+    XIL_PPoint after = AddPoint(XIL_CFGGetPointLocation(*point));
+    XIL_CFGEdgeAssign(*point, after, T.TranslateType(type), target, zero);
+    *point = after;
+    return;
+  }
+
+  if (const ConstantArrayType *cat = Ctx.getAsConstantArrayType(type)) {
+    QualType elementType = cat->getElementType();
+    XIL_Type xilElementType = T.TranslateType(elementType);
+    uint64_t size = std::min<uint64_t>(cat->getZExtSize(), 100);
+    for (uint64_t i = 0; i < size; i++) {
+      XIL_Exp element = XIL_ExpIndex(target, xilElementType, XIL_ExpInt((long) i));
+      ZeroInitialize(point, element, elementType);
+    }
+    return;
+  }
+
+  const RecordDecl *rd = type->getAsRecordDecl();
+  if (!rd || !rd->getDefinition())
+    return;
+  rd = rd->getDefinition();
+
+  if (const CXXRecordDecl *crd = dyn_cast<CXXRecordDecl>(rd)) {
+    for (const CXXBaseSpecifier &spec : crd->bases()) {
+      const CXXRecordDecl *base = spec.getType()->getAsCXXRecordDecl();
+      if (!base || spec.isVirtual())
+        continue;
+      ZeroInitialize(point, XIL_ExpFld(target, T.BaseField(crd, base)), spec.getType());
+    }
+  }
+
+  for (const FieldDecl *fd : rd->fields()) {
+    if (fd->isUnnamedBitField() || fd->getType()->isReferenceType())
+      continue;
+    ZeroInitialize(point, XIL_ExpFld(target, T.TranslateField(fd)), fd->getType());
+    // Only the first member of a union is zeroed.
+    if (rd->isUnion())
+      break;
+  }
+}
+
+void BlockTranslator::TranslateMaterialize(Env &env, const MaterializeTemporaryExpr *e)
+{
+  UpdateLocation(*env.point, e);
+
+  // Temporaries bound to references that are local variables last until the
+  // end of the variable's scope, otherwise until the end of the full
+  // expression. Temporaries bound to globals are not destroyed here.
+  Env::Destroy destroy = Env::DestroyFullExpr;
+  if (e->getExtendingDecl()) {
+    destroy = (e->getStorageDuration() == SD_Automatic)
+      ? Env::DestroyScope
+      : Env::DestroyNone;
+  }
+
+  QualType type = e->getType().getNonReferenceType();
+  XIL_Exp temp = XIL_ExpVar(NewTemporary(type));
+  InitializeObject(env.point, env.post, temp, type, e->getSubExpr(), destroy);
+  ProcessResult(env, XIL_ExpDrf(temp));
+}
+
+void BlockTranslator::TranslateBindTemporary(Env &env, const CXXBindTemporaryExpr *e)
+{
+  // Objects constructed directly into a variable, field or other object are
+  // destroyed with that object. Otherwise, the object is a temporary that
+  // needs to be destroyed.
+  if (env.assign) {
+    XIL_Exp target = env.assign;
+    Env::Destroy destroy = env.destroyAssign;
+    TranslateExpr(env, e->getSubExpr());
+    if (destroy != Env::DestroyNone)
+      AddCleanup(env.point, target, e->getType(), destroy);
+    return;
+  }
+
+  XIL_Exp value = RValue(e->getSubExpr(), env.point, env.post);
+  if (XIL_Exp address = value ? XIL_ExpAddress(value) : nullptr)
+    AddCleanup(env.point, address, e->getType(), Env::DestroyFullExpr);
+  ProcessResult(env, value);
+}
+
+void BlockTranslator::TranslateFullExpr(Env &env, const ExprWithCleanups *e)
+{
+  // The scope for the temporaries of this full expression, which are
+  // destroyed at its end.
+  Scope &scope = PushScope();
+  scope.cleanupPoint = true;
+  scope.conditionalDepth = ConditionalDepth;
+
+  // Leave space at the start to clear the flags of conditionally
+  // constructed temporaries.
+  XIL_PPoint flagStart = *env.point;
+  if (flagStart)
+    *env.point = AddPoint(XIL_CFGGetPointLocation(flagStart));
+  XIL_PPoint flagEnd = *env.point;
+
+  if (env.branch) {
+    // Destroy the temporaries on both sides of the branch.
+    XIL_PPoint truePoint = AddPoint(CurrentLocation());
+    XIL_PPoint falsePoint = AddPoint(CurrentLocation());
+    Branch(e->getSubExpr(), env.point, truePoint, falsePoint);
+    env.processed = true;
+
+    EmitCleanups(&truePoint, scope, 0, scope.cleanups.size());
+    EmitCleanups(&falsePoint, scope, 0, scope.cleanups.size());
+    XIL_CFGEdgeSkip(truePoint, env.truePoint);
+    XIL_CFGEdgeSkip(falsePoint, env.falsePoint);
+  }
+  else {
+    TranslateExpr(env, e->getSubExpr());
+    EmitCleanups(env.point, scope, 0, scope.cleanups.size());
+  }
+
+  PopScope();
+
+  if (flagStart) {
+    XIL_PPoint point = flagStart;
+    for (XIL_Var flag : scope.flags) {
+      XIL_PPoint after = AddPoint(XIL_CFGGetPointLocation(flagStart));
+      XIL_CFGEdgeAssign(point, after, T.TranslateType(Ctx.BoolTy), XIL_ExpVar(flag),
+                        XIL_ExpInt(0));
+      point = after;
+    }
+    XIL_CFGEdgeSkip(point, flagEnd);
+  }
+}
+
+void BlockTranslator::TranslateNew(Env &env, const CXXNewExpr *e)
+{
+  XIL_Location loc = UpdateLocation(*env.point, e);
+
+  const FunctionDecl *opNew = e->getOperatorNew();
+  QualType allocType = e->getAllocatedType();
+
+  // Allocate the memory, with a size for the allocated type.
+  std::vector<XIL_Exp> args;
+  XIL_Exp size = XIL_ExpInt(T.TypeBytes(allocType));
+  if (e->isArray()) {
+    if (std::optional<const Expr*> count = e->getArraySize()) {
+      XIL_Exp xcount = RValue(*count, env.point);
+      size = XIL_ExpBinop(XIL_B_Mult, xcount, size, nullptr, 0, true);
+    }
+  }
+  args.push_back(size);
+  const FunctionProtoType *newProto =
+    opNew ? opNew->getType()->getAs<FunctionProtoType>() : nullptr;
+  for (const Expr *arg : e->placement_arguments()) {
+    bool reference = newProto && args.size() < newProto->getNumParams() &&
+      newProto->getParamType(args.size())->isReferenceType();
+    args.push_back(CallArgument(arg, env.point, reference));
+  }
+
+  QualType resultType = opNew ? opNew->getReturnType() : Ctx.VoidPtrTy;
+  XIL_Exp temp = XIL_ExpVar(NewTemporary(resultType));
+  if (opNew) {
+    XIL_Exp function = XIL_ExpVar(T.FunctionVar(opNew));
+    AddCall(env.point, T.TranslateFunctionType(opNew->getType()), temp, nullptr,
+            function, args, loc);
+  }
+
+  // Construct the object in the allocated memory.
+  XIL_Exp object = XIL_ExpDrf(temp);
+  if (const Expr *init = e->getInitializer())
+    InitializeObject(env.point, nullptr, object, allocType, init);
+
+  ProcessResult(env, XIL_ExpDrf(temp));
+}
+
+void BlockTranslator::AddOperatorDelete(XIL_PPoint *point, XIL_Exp pointer, QualType type,
+                                        const FunctionDecl *opDelete)
+{
+  if (!opDelete)
+    return;
+
+  // Pass the size of the object to sized deallocation functions.
+  std::vector<XIL_Exp> args;
+  args.push_back(pointer);
+  if (opDelete->getNumParams() >= 2 &&
+      opDelete->getParamDecl(1)->getType()->isIntegerType() &&
+      !type->isIncompleteType())
+    args.push_back(XIL_ExpInt(T.TypeBytes(type)));
+
+  XIL_Exp function = XIL_ExpVar(T.FunctionVar(opDelete));
+  AddCall(point, T.TranslateFunctionType(opDelete->getType()), nullptr, nullptr,
+          function, args);
+}
+
+void BlockTranslator::TranslateDelete(Env &env, const CXXDeleteExpr *e)
+{
+  XIL_Location loc = UpdateLocation(*env.point, e);
+
+  const Expr *arg = e->getArgument();
+  XIL_Exp pointer = RValue(arg, env.point);
+
+  // Deleting a null pointer does nothing.
+  XIL_PPoint deletePoint = AddPoint(loc);
+  XIL_PPoint joinPoint = AddPoint(loc);
+  XIL_Exp test = MakeTruthValue(pointer, arg->getType(), true);
+  XIL_CFGEdgeAssume(*env.point, deletePoint, test, 1);
+  XIL_CFGEdgeAssume(*env.point, joinPoint, test, 0);
+
+  QualType type = e->getDestroyedType();
+  const CXXRecordDecl *rd = type->getAsCXXRecordDecl();
+  const CXXDestructorDecl *dtor =
+    (rd && rd->hasDefinition() && !rd->hasTrivialDestructor()) ? rd->getDestructor() : nullptr;
+
+  bool done = false;
+  if (dtor && !e->isArrayForm()) {
+    if (dtor->isVirtual() && !dtor->getDevirtualizedMethod(arg, false)) {
+      // Call the deleting destructor through the object's vtable. This also
+      // deallocates the object.
+      XIL_Field field = VirtualField(rd, dtor, Dtor_Deleting);
+      XIL_Exp function = XIL_ExpDrf(XIL_ExpFld(XIL_ExpEmpty(), field));
+      std::vector<XIL_Exp> args;
+      AddCall(&deletePoint, T.TranslateMethodType(dtor), nullptr, pointer, function, args);
+      done = true;
+    }
+    else {
+      AddDestructorCall(&deletePoint, pointer, dtor, Dtor_Complete);
+    }
+  }
+  if (!done)
+    AddOperatorDelete(&deletePoint, pointer, type, e->getOperatorDelete());
+
+  XIL_CFGEdgeSkip(deletePoint, joinPoint);
+  *env.point = joinPoint;
+
+  if (env.used())
+    ProcessResult(env, XIL_ExpEmpty());
+}
+
+void BlockTranslator::AddDestructorCall(XIL_PPoint *point, XIL_Exp instance,
+                                        const CXXDestructorDecl *dtor, CXXDtorType kind)
+{
+  XIL_Exp function = XIL_ExpVar(T.FunctionVar(GlobalDecl(dtor, kind)));
+  std::vector<XIL_Exp> args;
+  AddCall(point, T.TranslateMethodType(dtor), nullptr, instance, function, args);
+}
+
+// Constructing or destroying an array of objects calls the constructor or
+// destructor on each element. These are treated as a single call on the
+// first element.
+XIL_Exp BlockTranslator::FirstElement(XIL_Exp object, QualType *type)
+{
+  while (const ArrayType *at = Ctx.getAsArrayType(*type)) {
+    *type = at->getElementType();
+    object = XIL_ExpIndex(object, T.TranslateType(*type), XIL_ExpInt(0));
+  }
+  return object;
+}
+
+// Remember to destroy an object when leaving the current scope (for local
+// variables and lifetime extended temporaries) or at the end of the current
+// full expression (for other temporaries).
+void BlockTranslator::AddCleanup(XIL_PPoint *point, XIL_Exp instance, QualType type,
+                                 Env::Destroy destroy)
+{
+  instance = FirstElement(instance, &type);
+  const CXXRecordDecl *rd = type->getAsCXXRecordDecl();
+  if (!rd || !rd->hasDefinition() || rd->hasTrivialDestructor())
+    return;
+  const CXXDestructorDecl *dtor = rd->getDestructor();
+  if (!dtor)
+    return;
+
+  Scope *scope = &LanguageScope();
+  if (destroy == Env::DestroyFullExpr) {
+    for (Scope *s = ActiveScope; s; s = s->parent) {
+      if (s->cleanupPoint) {
+        scope = s;
+        break;
+      }
+    }
+  }
+
+  Cleanup cleanup{instance, dtor};
+
+  // Objects constructed in a conditional branch of the full expression are
+  // destroyed only if they were constructed.
+  if (scope->cleanupPoint && ConditionalDepth > scope->conditionalDepth && *point) {
+    cleanup.flag = NewTemporary(Ctx.BoolTy);
+    XIL_PPoint after = AddPoint(XIL_CFGGetPointLocation(*point));
+    XIL_CFGEdgeAssign(*point, after, T.TranslateType(Ctx.BoolTy),
+                      XIL_ExpVar(cleanup.flag), XIL_ExpInt(1));
+    *point = after;
+    scope->flags.push_back(cleanup.flag);
+  }
+
+  scope->cleanups.push_back(cleanup);
+}
+
+void BlockTranslator::EmitCleanup(XIL_PPoint *point, const Cleanup &cleanup)
+{
+  if (!*point)
+    return;
+
+  if (!cleanup.flag) {
+    AddDestructorCall(point, cleanup.instance, cleanup.dtor, Dtor_Complete);
+    return;
+  }
+
+  XIL_Location loc = XIL_CFGGetPointLocation(*point);
+  XIL_Exp test = XIL_ExpDrf(XIL_ExpVar(cleanup.flag));
+  XIL_PPoint destroyPoint = AddPoint(loc);
+  XIL_PPoint joinPoint = AddPoint(loc);
+  XIL_CFGEdgeAssume(*point, destroyPoint, test, 1);
+  XIL_CFGEdgeAssume(*point, joinPoint, test, 0);
+  AddDestructorCall(&destroyPoint, cleanup.instance, cleanup.dtor, Dtor_Complete);
+  XIL_CFGEdgeSkip(destroyPoint, joinPoint);
+  *point = joinPoint;
+}
+
+// Destroy objects in reverse order of construction.
+void BlockTranslator::EmitCleanups(XIL_PPoint *point, Scope &scope, size_t begin, size_t end)
+{
+  for (size_t i = end; i > begin; i--)
+    EmitCleanup(point, scope.cleanups[i - 1]);
+}
+
+// Call the variant of a constructor or destructor with the same arguments.
+void BlockTranslator::ForwardToVariant(XIL_PPoint *point, GlobalDecl target)
+{
+  const CXXMethodDecl *md = cast<CXXMethodDecl>(target.getDecl());
+  std::vector<XIL_Exp> args;
+  for (const ParmVarDecl *pd : md->parameters())
+    args.push_back(XIL_ExpDrf(XIL_ExpVar(TranslateParam(pd))));
+  XIL_Exp function = XIL_ExpVar(T.FunctionVar(target));
+  AddCall(point, T.TranslateMethodType(md), nullptr, ThisValue(), function, args);
+}
+
+void BlockTranslator::TranslateCtorInitializers(XIL_PPoint *point,
+                                                const CXXConstructorDecl *ctor,
+                                                CXXCtorType kind)
+{
+  const CXXRecordDecl *rd = ctor->getParent();
+  XIL_Exp object = ThisValue();
+
+  for (const CXXCtorInitializer *init : ctor->inits()) {
+    // Virtual bases are constructed only by the complete object constructor.
+    if (init->isBaseInitializer() && init->isBaseVirtual() && kind == Ctor_Base)
+      continue;
+
+    if (init->isWritten())
+      UpdateLocation(*point, init->getSourceLocation());
+
+    // Each initializer is a separate statement.
+    PostEdges post;
+    if (init->isBaseInitializer()) {
+      const CXXRecordDecl *base = init->getBaseClass()->getAsCXXRecordDecl();
+      XIL_Exp target = XIL_ExpFld(object, T.BaseField(rd, base));
+      Env env(point, &post);
+      env.assign = target;
+      env.assignType = T.TranslateType(init->getBaseClass()->getCanonicalTypeInternal());
+      env.baseSubobject = true;
+      TranslateExpr(env, init->getInit());
+    }
+    else if (init->isDelegatingInitializer()) {
+      Env env(point, &post);
+      env.assign = object;
+      env.assignType = T.TranslateType(Ctx.getCanonicalTagType(rd));
+      env.baseSubobject = (kind == Ctor_Base);
+      TranslateExpr(env, init->getInit());
+    }
+    else if (const FieldDecl *fd = init->getAnyMember()) {
+      XIL_Exp target = object;
+      if (const IndirectFieldDecl *ifd = init->getIndirectMember()) {
+        for (const NamedDecl *nd : ifd->chain())
+          target = XIL_ExpFld(target, T.TranslateField(cast<FieldDecl>(nd)));
+      }
+      else {
+        target = XIL_ExpFld(target, T.TranslateField(fd));
+      }
+      InitializeObject(point, &post, target, fd->getType(), init->getInit());
+    }
+    ConnectPostPoint(point, post);
+  }
+}
+
+// Destroy the members and bases of an object at the end of a base object
+// destructor, in reverse order of construction.
+void BlockTranslator::TranslateDestructorEpilogue(XIL_PPoint *point,
+                                                  const CXXDestructorDecl *dtor)
+{
+  const CXXRecordDecl *rd = dtor->getParent();
+  XIL_Exp object = ThisValue();
+
+  if (!rd->isUnion()) {
+    std::vector<const FieldDecl*> fields(rd->field_begin(), rd->field_end());
+    for (auto it = fields.rbegin(); it != fields.rend(); ++it) {
+      const FieldDecl *fd = *it;
+      QualType type = fd->getType();
+      XIL_Exp target = FirstElement(XIL_ExpFld(object, T.TranslateField(fd)), &type);
+      const CXXRecordDecl *frd = type->getAsCXXRecordDecl();
+      if (!frd || !frd->hasDefinition() || frd->hasTrivialDestructor() || frd->isUnion())
+        continue;
+      if (const CXXDestructorDecl *fdtor = frd->getDestructor())
+        AddDestructorCall(point, target, fdtor, Dtor_Complete);
+    }
+  }
+
+  std::vector<const CXXBaseSpecifier*> bases;
+  for (const CXXBaseSpecifier &spec : rd->bases())
+    bases.push_back(&spec);
+  for (auto it = bases.rbegin(); it != bases.rend(); ++it) {
+    if ((*it)->isVirtual())
+      continue;
+    const CXXRecordDecl *base = (*it)->getType()->getAsCXXRecordDecl();
+    if (!base || !base->hasDefinition() || base->hasTrivialDestructor())
+      continue;
+    if (const CXXDestructorDecl *bdtor = base->getDestructor()) {
+      XIL_Exp target = XIL_ExpFld(object, T.BaseField(rd, base));
+      AddDestructorCall(point, target, bdtor, Dtor_Base);
+    }
+  }
 }
 
 void BlockTranslator::TranslateVAArg(Env &env, const VAArgExpr *e)
@@ -1339,10 +2393,7 @@ void BlockTranslator::TranslateInitList(Env &env, const InitListExpr *e)
     // with gcc.
     if (isa<ImplicitValueInitExpr>(init))
       return;
-    Env valueEnv(env.point);
-    valueEnv.assign = elementLval;
-    valueEnv.assignType = T.TranslateType(elementType);
-    TranslateExpr(valueEnv, init);
+    InitializeObject(env.point, nullptr, elementLval, elementType, init);
   };
 
   if (const ArrayType *at = Ctx.getAsArrayType(type)) {
@@ -1364,6 +2415,7 @@ void BlockTranslator::TranslateInitList(Env &env, const InitListExpr *e)
     }
   }
   else if (const RecordDecl *rd = type->getAsRecordDecl()) {
+    rd = rd->getDefinition();
     if (rd->isUnion()) {
       const FieldDecl *fd = e->getInitializedFieldInUnion();
       if (fd && e->getNumInits())
@@ -1371,7 +2423,24 @@ void BlockTranslator::TranslateInitList(Env &env, const InitListExpr *e)
                       e->getInit(0));
     }
     else {
+      // In C++, base classes are initialized before the fields.
       unsigned index = 0;
+      if (const CXXRecordDecl *crd = dyn_cast<CXXRecordDecl>(rd)) {
+        for (const CXXBaseSpecifier &spec : crd->bases()) {
+          const CXXRecordDecl *base = spec.getType()->getAsCXXRecordDecl();
+          if (!base || index >= e->getNumInits())
+            break;
+          const Expr *init = e->getInit(index++);
+          XIL_Exp target = XIL_ExpFld(lval, T.BaseField(crd, base));
+          if (!isa<ImplicitValueInitExpr>(init)) {
+            Env baseEnv(env.point);
+            baseEnv.assign = target;
+            baseEnv.assignType = T.TranslateType(spec.getType());
+            baseEnv.baseSubobject = true;
+            TranslateExpr(baseEnv, init);
+          }
+        }
+      }
       for (const FieldDecl *fd : rd->fields()) {
         if (fd->isUnnamedBitField())
           continue;
@@ -1383,7 +2452,8 @@ void BlockTranslator::TranslateInitList(Env &env, const InitListExpr *e)
     }
   }
   else {
-    UnexpectedResult(env, "initializer list", e);
+    // Vector and complex types are not handled, as with gcc.
+    BogusResult(env);
     return;
   }
 
@@ -1398,8 +2468,7 @@ void BlockTranslator::TranslateStmtExpr(Env &env, const StmtExpr *e)
   UpdateLocation(*env.point, e);
   const CompoundStmt *body = e->getSubStmt();
 
-  Scope scope;
-  PushScope(scope);
+  Scope &scope = PushScope();
 
   // The value of the statement expression is the value of the last statement.
   unsigned count = body->size();
@@ -1431,7 +2500,7 @@ void BlockTranslator::TranslateStmtExpr(Env &env, const StmtExpr *e)
     }
   }
 
-  PopScope();
+  FinishScope(env.point, scope);
 
   if (env.used() && !env.processed)
     ProcessResult(env, XIL_ExpEmpty());
@@ -1441,15 +2510,36 @@ void BlockTranslator::TranslateStmtExpr(Env &env, const StmtExpr *e)
 // Statements
 /////////////////////////////////////////////////////////////////////
 
-void BlockTranslator::PushScope(Scope &scope)
+Scope &BlockTranslator::PushScope()
 {
+  AllScopes.emplace_back();
+  Scope &scope = AllScopes.back();
   scope.parent = ActiveScope;
   ActiveScope = &scope;
+  return scope;
 }
 
 void BlockTranslator::PopScope()
 {
   ActiveScope = ActiveScope->parent;
+}
+
+// The innermost scope that local variables are declared in.
+Scope &BlockTranslator::LanguageScope()
+{
+  for (Scope *scope = ActiveScope; scope; scope = scope->parent) {
+    if (!scope->cleanupPoint)
+      return *scope;
+  }
+  return PushScope();
+}
+
+ScopeChain BlockTranslator::CurrentChain()
+{
+  ScopeChain chain;
+  for (Scope *scope = ActiveScope; scope; scope = scope->parent)
+    chain.push_back({scope, scope->cleanups.size()});
+  return chain;
 }
 
 void BlockTranslator::ConnectPostPoint(XIL_PPoint *point, const PostEdges &post)
@@ -1460,10 +2550,34 @@ void BlockTranslator::ConnectPostPoint(XIL_PPoint *point, const PostEdges &post)
   *point = post.end;
 }
 
-void BlockTranslator::ResolveGoto(XIL_PPoint source, XIL_PPoint target)
+// Jump from one point to another, destroying the objects in scopes that are
+// left. For each scope at the source, objects that were not yet constructed
+// at the target are destroyed, as gcc/xgill.c's XIL_ResolveGoto does.
+void BlockTranslator::ResolveGoto(XIL_PPoint source, XIL_PPoint target,
+                                  const ScopeChain &sourceChain,
+                                  const ScopeChain &targetChain)
 {
-  // C has no cleanups to run when jumping out of scopes.
-  XIL_CFGEdgeSkip(source, target);
+  if (!source)
+    return;
+
+  XIL_PPoint point = source;
+  for (const auto &[scope, count] : sourceChain) {
+    size_t targetCount = 0;
+    bool common = false;
+    for (const auto &[targetScope, n] : targetChain) {
+      if (targetScope == scope) {
+        targetCount = n;
+        common = true;
+        break;
+      }
+    }
+    if (count > targetCount)
+      EmitCleanups(&point, *scope, targetCount, count);
+    if (common)
+      break;
+  }
+
+  XIL_CFGEdgeSkip(point, target);
 }
 
 void BlockTranslator::TranslateStmt(XIL_PPoint *point, const Stmt *s)
@@ -1480,8 +2594,16 @@ void BlockTranslator::TranslateStmt(XIL_PPoint *point, const Stmt *s)
     return;
 
   case Stmt::DeclStmtClass:
-    for (const clang::Decl *d : cast<DeclStmt>(s)->decls())
-      TranslateDecl(point, nullptr, d);
+    TranslateDeclStmt(point, nullptr, s);
+    return;
+
+  case Stmt::CXXForRangeStmtClass:
+    TranslateForRange(point, cast<CXXForRangeStmt>(s));
+    return;
+
+  case Stmt::CXXTryStmtClass:
+    // Exceptions are not modeled, as with gcc.
+    TranslateStmt(point, cast<CXXTryStmt>(s)->getTryBlock());
     return;
 
   case Stmt::ReturnStmtClass:
@@ -1533,7 +2655,8 @@ void BlockTranslator::TranslateStmt(XIL_PPoint *point, const Stmt *s)
       Unexpected("break/continue", s);
       return;
     }
-    ResolveGoto(*point, isBreak ? scope->breakPoint : scope->continuePoint);
+    ResolveGoto(*point, isBreak ? scope->breakPoint : scope->continuePoint,
+                CurrentChain(), isBreak ? scope->breakChain : scope->continueChain);
     *point = 0;
     return;
   }
@@ -1565,25 +2688,40 @@ void BlockTranslator::TranslateCompound(XIL_PPoint *point, const CompoundStmt *s
 {
   UpdateLocation(*point, s->getLBracLoc());
 
+  Scope &scope = PushScope();
+
   for (const Stmt *child : s->body()) {
     PostEdges post;
     if (const Expr *e = dyn_cast<Expr>(child)) {
       Env env(point, &post);
       TranslateExpr(env, e);
     }
-    else if (const DeclStmt *ds = dyn_cast<DeclStmt>(child)) {
-      for (const clang::Decl *d : ds->decls())
-        TranslateDecl(point, &post, d);
+    else if (isa<DeclStmt>(child)) {
+      TranslateDeclStmt(point, &post, child);
     }
     else {
       TranslateStmt(point, child);
     }
     ConnectPostPoint(point, post);
   }
+
+  // Destroy the scope's objects when falling through the end of the block.
+  if (*point && !scope.cleanups.empty()) {
+    UpdateLocation(*point, s->getRBracLoc());
+    EmitCleanups(point, scope, 0, scope.cleanups.size());
+  }
+
+  PopScope();
+}
+
+void BlockTranslator::TranslateDeclStmt(XIL_PPoint *point, PostEdges *post, const Stmt *s)
+{
+  for (const clang::Decl *d : cast<DeclStmt>(s)->decls())
+    TranslateDecl(point, post, d);
 }
 
 void BlockTranslator::TranslateDecl(XIL_PPoint *point, PostEdges *post,
-                                    const clang::Decl *d)
+                                    const clang::Decl *d, bool destroy)
 {
   const VarDecl *vd = dyn_cast<VarDecl>(d);
   if (!vd)
@@ -1618,14 +2756,22 @@ void BlockTranslator::TranslateDecl(XIL_PPoint *point, PostEdges *post,
     *point = after;
   }
 
-  const Expr *init = vd->getInit();
-  if (!init)
-    return;
+  if (const Expr *init = vd->getInit())
+    InitializeObject(point, post, varExp, type, init);
 
-  Env env(point, post);
-  env.assign = varExp;
-  env.assignType = T.TranslateType(type);
-  TranslateExpr(env, init);
+  // The holding variables of structured bindings to tuple-like types.
+  if (const DecompositionDecl *dd = dyn_cast<DecompositionDecl>(vd)) {
+    for (const BindingDecl *bd : dd->bindings()) {
+      if (const VarDecl *holding = bd->getHoldingVar())
+        TranslateDecl(point, post, holding, destroy);
+    }
+  }
+
+  // Destroy the variable at the end of its scope. A variable for the named
+  // return value optimization is the returned object, which isn't destroyed.
+  if (destroy && !vd->isNRVOVariable() &&
+      vd->needsDestruction(Ctx) == QualType::DK_cxx_destructor)
+    AddCleanup(point, varExp, type, Env::DestroyScope);
 }
 
 void BlockTranslator::TranslateReturn(XIL_PPoint *point, const ReturnStmt *s)
@@ -1636,27 +2782,86 @@ void BlockTranslator::TranslateReturn(XIL_PPoint *point, const ReturnStmt *s)
     // This is an assignment to the return value, with any post side effects
     // after the assignment.
     PostEdges post;
-    Env env(point, &post);
-    if (!value->getType()->isVoidType()) {
-      env.assign = XIL_ExpVar(GetReturnVar());
-      env.assignType = T.TranslateType(Func->getReturnType());
+    if (const VarDecl *nrvo = s->getNRVOCandidate(); nrvo && Func) {
+      // The variable is the returned object.
+      XIL_Var var = TranslateLocal(nrvo);
+      XIL_PPoint after = AddPoint(CurrentLocation());
+      XIL_CFGEdgeAssign(*point, after, T.TranslateType(nrvo->getType()),
+                        XIL_ExpVar(GetReturnVar()), XIL_ExpDrf(XIL_ExpVar(var)));
+      *point = after;
     }
-    TranslateExpr(env, value);
+    else if (!value->getType()->isVoidType() && Func) {
+      InitializeObject(point, &post, XIL_ExpVar(GetReturnVar()),
+                       Func->getReturnType(), value);
+    }
+    else {
+      Env env(point, &post);
+      TranslateExpr(env, value);
+    }
     ConnectPostPoint(point, post);
   }
 
-  ResolveGoto(*point, ExitPoint);
+  ResolveGoto(*point, ReturnPoint, CurrentChain(), ScopeChain());
   *point = 0;
+}
+
+// A statement that is evaluated before a loop or if statement.
+void BlockTranslator::TranslateInitStmt(XIL_PPoint *point, const Stmt *init)
+{
+  PostEdges post;
+  if (isa<DeclStmt>(init)) {
+    TranslateDeclStmt(point, &post, init);
+  }
+  else if (const Expr *e = dyn_cast<Expr>(init)) {
+    Env env(point, &post);
+    TranslateExpr(env, e);
+  }
+  else {
+    TranslateStmt(point, init);
+  }
+  ConnectPostPoint(point, post);
+}
+
+// Leave a scope at the end of a statement, destroying its objects.
+void BlockTranslator::FinishScope(XIL_PPoint *point, Scope &scope)
+{
+  EmitCleanups(point, scope, 0, scope.cleanups.size());
+  PopScope();
 }
 
 void BlockTranslator::TranslateIf(XIL_PPoint *point, const IfStmt *s)
 {
   XIL_Location loc = UpdateLocation(*point, s);
 
-  if (s->getInit() || s->getConditionVariable() || s->isConsteval()) {
-    Unexpected("if statement", s);
+  // Only one branch of if consteval runs at runtime.
+  if (s->isConsteval()) {
+    const Stmt *taken = s->isNegatedConsteval() ? s->getThen() : s->getElse();
+    if (taken)
+      TranslateStmt(point, taken);
     return;
   }
+
+  // Variables declared in the init statement or condition are in a scope
+  // around the whole statement.
+  Scope &scope = PushScope();
+
+  if (const Stmt *init = s->getInit()) {
+    TranslateInitStmt(point, init);
+    loc = UpdateLocation(*point, s);
+  }
+
+  // The discarded branch of if constexpr is not part of the program.
+  if (s->isConstexpr()) {
+    if (std::optional<const Stmt*> taken = s->getNondiscardedCase(Ctx)) {
+      if (*taken)
+        TranslateStmt(point, *taken);
+      FinishScope(point, scope);
+      return;
+    }
+  }
+
+  if (const DeclStmt *ds = s->getConditionVariableDeclStmt())
+    TranslateDeclStmt(point, nullptr, ds);
 
   XIL_PPoint truePoint = AddPoint(loc);
   XIL_PPoint falsePoint = AddPoint(loc);
@@ -1675,16 +2880,13 @@ void BlockTranslator::TranslateIf(XIL_PPoint *point, const IfStmt *s)
   else {
     *point = 0;
   }
+
+  FinishScope(point, scope);
 }
 
 void BlockTranslator::TranslateWhile(XIL_PPoint *point, const WhileStmt *s)
 {
   XIL_Location loc = UpdateLocation(*point, s);
-
-  if (s->getConditionVariable()) {
-    Unexpected("while statement", s);
-    return;
-  }
 
   // As with labels, always consider the entry points of loops to be
   // reachable, in case there is a jump into the middle of the loop.
@@ -1696,10 +2898,17 @@ void BlockTranslator::TranslateWhile(XIL_PPoint *point, const WhileStmt *s)
   XIL_PPoint bodyPoint = AddPoint(loc);
   XIL_CFGAddLoopHead(startPoint, nullptr);
 
-  Scope scope;
+  ScopeChain outerChain = CurrentChain();
+  Scope &scope = PushScope();
   scope.continuePoint = startPoint;
   scope.breakPoint = afterPoint;
-  PushScope(scope);
+  scope.breakChain = outerChain;
+  scope.continueChain = CurrentChain();
+
+  // A condition variable is declared on each iteration. Its destruction is
+  // not modeled.
+  if (const VarDecl *vd = s->getConditionVariable())
+    TranslateDecl(point, nullptr, vd, false);
 
   Branch(s->getCond(), point, bodyPoint, afterPoint);
   TranslateStmt(&bodyPoint, s->getBody());
@@ -1720,10 +2929,12 @@ void BlockTranslator::TranslateDo(XIL_PPoint *point, const DoStmt *s)
   XIL_PPoint afterPoint = AddPoint(loc);
   XIL_CFGAddLoopHead(startPoint, nullptr);
 
-  Scope scope;
+  ScopeChain outerChain = CurrentChain();
+  Scope &scope = PushScope();
   scope.continuePoint = startPoint;
   scope.breakPoint = afterPoint;
-  PushScope(scope);
+  scope.breakChain = outerChain;
+  scope.continueChain = CurrentChain();
 
   TranslateStmt(point, s->getBody());
   Branch(s->getCond(), point, startPoint, afterPoint);
@@ -1736,26 +2947,12 @@ void BlockTranslator::TranslateFor(XIL_PPoint *point, const ForStmt *s)
 {
   XIL_Location loc = UpdateLocation(*point, s);
 
-  if (s->getConditionVariable()) {
-    Unexpected("for statement", s);
-    return;
-  }
+  // Variables declared in the initializer are in a scope around the loop.
+  Scope &outerScope = PushScope();
 
   // The initializer is a separate statement before the loop, as with gcc.
   if (const Stmt *init = s->getInit()) {
-    PostEdges post;
-    if (const DeclStmt *ds = dyn_cast<DeclStmt>(init)) {
-      for (const clang::Decl *d : ds->decls())
-        TranslateDecl(point, &post, d);
-    }
-    else if (const Expr *e = dyn_cast<Expr>(init)) {
-      Env env(point, &post);
-      TranslateExpr(env, e);
-    }
-    else {
-      TranslateStmt(point, init);
-    }
-    ConnectPostPoint(point, post);
+    TranslateInitStmt(point, init);
     loc = UpdateLocation(*point, s);
   }
 
@@ -1768,10 +2965,15 @@ void BlockTranslator::TranslateFor(XIL_PPoint *point, const ForStmt *s)
   XIL_PPoint incPoint = AddPoint(loc);
   XIL_CFGAddLoopHead(startPoint, nullptr);
 
-  Scope scope;
+  ScopeChain outerChain = CurrentChain();
+  Scope &scope = PushScope();
   scope.continuePoint = incPoint;
   scope.breakPoint = afterPoint;
-  PushScope(scope);
+  scope.breakChain = outerChain;
+  scope.continueChain = CurrentChain();
+
+  if (const VarDecl *vd = s->getConditionVariable())
+    TranslateDecl(point, nullptr, vd, false);
 
   if (s->getCond())
     Branch(s->getCond(), point, bodyPoint, afterPoint);
@@ -1791,25 +2993,90 @@ void BlockTranslator::TranslateFor(XIL_PPoint *point, const ForStmt *s)
   XIL_CFGEdgeSkip(incPoint, startPoint);
   PopScope();
   *point = afterPoint;
+  FinishScope(point, outerScope);
+}
+
+void BlockTranslator::TranslateForRange(XIL_PPoint *point, const CXXForRangeStmt *s)
+{
+  XIL_Location loc = UpdateLocation(*point, s);
+
+  // The range, begin and end variables are in a scope around the loop. A
+  // temporary range is lifetime extended by the range variable.
+  Scope &outerScope = PushScope();
+
+  if (const Stmt *init = s->getInit())
+    TranslateInitStmt(point, init);
+  TranslateInitStmt(point, s->getRangeStmt());
+  if (const Stmt *begin = s->getBeginStmt())
+    TranslateInitStmt(point, begin);
+  if (const Stmt *end = s->getEndStmt())
+    TranslateInitStmt(point, end);
+  loc = UpdateLocation(*point, s);
+
+  if (!*point)
+    *point = AddPoint(loc);
+
+  XIL_PPoint startPoint = *point;
+  XIL_PPoint afterPoint = AddPoint(loc);
+  XIL_PPoint bodyPoint = AddPoint(loc);
+  XIL_PPoint incPoint = AddPoint(loc);
+  XIL_CFGAddLoopHead(startPoint, nullptr);
+
+  ScopeChain outerChain = CurrentChain();
+  Scope &scope = PushScope();
+  scope.continuePoint = incPoint;
+  scope.breakPoint = afterPoint;
+  scope.breakChain = outerChain;
+  scope.continueChain = CurrentChain();
+
+  Branch(s->getCond(), point, bodyPoint, afterPoint);
+
+  // The loop variable is declared in each iteration.
+  {
+    Scope &bodyScope = PushScope();
+    TranslateDeclStmt(&bodyPoint, nullptr, s->getLoopVarStmt());
+    TranslateStmt(&bodyPoint, s->getBody());
+    FinishScope(&bodyPoint, bodyScope);
+  }
+  XIL_CFGEdgeSkip(bodyPoint, incPoint);
+
+  if (const Expr *inc = s->getInc()) {
+    PostEdges post;
+    Env env(&incPoint, &post);
+    TranslateExpr(env, inc);
+    ConnectPostPoint(&incPoint, post);
+  }
+
+  XIL_CFGEdgeSkip(incPoint, startPoint);
+  PopScope();
+  *point = afterPoint;
+  FinishScope(point, outerScope);
 }
 
 void BlockTranslator::TranslateSwitch(XIL_PPoint *point, const SwitchStmt *s)
 {
   XIL_Location loc = UpdateLocation(*point, s);
 
-  if (s->getInit() || s->getConditionVariable()) {
-    Unexpected("switch statement", s);
-    return;
+  // Variables declared in the init statement or condition are in a scope
+  // around the whole statement.
+  Scope &outerScope = PushScope();
+
+  if (const Stmt *init = s->getInit()) {
+    TranslateInitStmt(point, init);
+    loc = UpdateLocation(*point, s);
   }
+  if (const DeclStmt *ds = s->getConditionVariableDeclStmt())
+    TranslateDeclStmt(point, nullptr, ds);
 
   XIL_Exp test = RValue(s->getCond(), point);
   XIL_PPoint afterPoint = AddPoint(loc);
 
-  Scope scope;
+  ScopeChain outerChain = CurrentChain();
+  Scope &scope = PushScope();
   scope.switchTest = test;
   scope.switchPoint = *point;
   scope.breakPoint = afterPoint;
-  PushScope(scope);
+  scope.breakChain = outerChain;
 
   XIL_PPoint bodyPoint = 0;
   TranslateStmt(&bodyPoint, s->getBody());
@@ -1828,6 +3095,7 @@ void BlockTranslator::TranslateSwitch(XIL_PPoint *point, const SwitchStmt *s)
   XIL_CFGEdgeSkip(bodyPoint, afterPoint);
   *point = afterPoint;
   PopScope();
+  FinishScope(point, outerScope);
 }
 
 void BlockTranslator::TranslateCase(XIL_PPoint *point, const SwitchCase *s)
@@ -1886,10 +3154,11 @@ void BlockTranslator::TranslateLabel(XIL_PPoint *point, const LabelStmt *s)
   if (!*point)
     *point = AddPoint(loc);
   data.point = *point;
+  data.chain = CurrentChain();
 
   // Resolve any gotos to this label we saw before the label.
-  for (XIL_PPoint source : data.gotos) {
-    ResolveGoto(source, data.point);
+  for (const GotoData &g : data.gotos) {
+    ResolveGoto(g.point, data.point, g.chain, data.chain);
     XIL_CFGAddLoopHead(data.point, nullptr);
   }
   data.gotos.clear();
@@ -1901,11 +3170,11 @@ void BlockTranslator::TranslateGoto(XIL_PPoint *point, const GotoStmt *s)
 
   LabelData &data = Labels[s->getLabel()];
   if (data.point) {
-    ResolveGoto(*point, data.point);
+    ResolveGoto(*point, data.point, CurrentChain(), data.chain);
     XIL_CFGAddLoopHead(data.point, nullptr);
   }
   else {
-    data.gotos.push_back(*point);
+    data.gotos.push_back({*point, CurrentChain()});
   }
 
   *point = 0;
@@ -1915,14 +3184,15 @@ void BlockTranslator::TranslateGoto(XIL_PPoint *point, const GotoStmt *s)
 // Blocks
 /////////////////////////////////////////////////////////////////////
 
-void BlockTranslator::GenerateFunction(const FunctionDecl *fd)
+void BlockTranslator::GenerateFunction(GlobalDecl gd)
 {
+  const FunctionDecl *fd = cast<FunctionDecl>(gd.getDecl());
   Func = fd;
-  DeclName = T.FunctionName(fd);
+  DeclName = T.FunctionName(gd);
 
   // The function's own type carries its annotations.
   XIL_Type type = T.TranslateFunctionType(fd->getType(), fd);
-  XIL_Var var = T.FunctionVar(fd);
+  XIL_Var var = T.FunctionVar(gd);
 
   XIL_Location beginLoc = T.MakeLocation(fd->getLocation());
   XIL_Location endLoc = T.MakeLocation(fd->getBody()->getEndLoc());
@@ -1935,16 +3205,72 @@ void BlockTranslator::GenerateFunction(const FunctionDecl *fd)
   XIL_CFGSetEndLocation(endLoc);
 
   EntryPoint = LastPoint = XIL_CFGAddPoint(beginLoc);
-  ExitPoint = XIL_CFGAddPoint(endLoc);
+  ExitPoint = ReturnPoint = XIL_CFGAddPoint(endLoc);
   XIL_CFGSetEntryPoint(EntryPoint);
   XIL_CFGSetExitPoint(ExitPoint);
 
   XIL_CFGAddVar(var, type, 1);
+
+  const CXXMethodDecl *md = dyn_cast<CXXMethodDecl>(fd);
+  if (md && md->isInstance())
+    XIL_CFGAddVar(XIL_VarThis(), T.TranslateType(md->getThisType()), 0);
+
   for (const ParmVarDecl *pd : fd->parameters())
     TranslateParam(pd);
 
   XIL_PPoint point = EntryPoint;
-  TranslateStmt(&point, fd->getBody());
+
+  if (md && md->isInstance() && md->getParent()->isLambda())
+    InitializeCaptures(&point, md);
+
+  // The variants of constructors and destructors call each other. The base
+  // object variants have the real bodies, as described in
+  // local/clang-port-plan.md.
+  const CXXConstructorDecl *ctor = dyn_cast<CXXConstructorDecl>(fd);
+  const CXXDestructorDecl *dtor = dyn_cast<CXXDestructorDecl>(fd);
+  if (ctor && gd.getCtorType() == Ctor_Complete && !ctor->getParent()->getNumVBases() &&
+      !ctor->isVariadic()) {
+    ForwardToVariant(&point, GlobalDecl(ctor, Ctor_Base));
+  }
+  else if (dtor && gd.getDtorType() == Dtor_Deleting) {
+    ForwardToVariant(&point, GlobalDecl(dtor, Dtor_Complete));
+    QualType type = Ctx.getCanonicalTagType(dtor->getParent());
+    AddOperatorDelete(&point, ThisValue(), type, dtor->getOperatorDelete());
+  }
+  else if (dtor && gd.getDtorType() == Dtor_Complete) {
+    // Call the base object destructor, then destroy the virtual bases.
+    ForwardToVariant(&point, GlobalDecl(dtor, Dtor_Base));
+    const CXXRecordDecl *rd = dtor->getParent();
+    std::vector<const CXXBaseSpecifier*> vbases;
+    for (const CXXBaseSpecifier &spec : rd->vbases())
+      vbases.push_back(&spec);
+    for (auto it = vbases.rbegin(); it != vbases.rend(); ++it) {
+      const CXXRecordDecl *base = (*it)->getType()->getAsCXXRecordDecl();
+      if (!base || !base->hasDefinition() || base->hasTrivialDestructor())
+        continue;
+      if (const CXXDestructorDecl *bdtor = base->getDestructor()) {
+        XIL_Exp target = XIL_ExpFld(ThisValue(), T.BaseField(rd, base));
+        AddDestructorCall(&point, target, bdtor, Dtor_Base);
+      }
+    }
+  }
+  else {
+    if (ctor)
+      TranslateCtorInitializers(&point, ctor, gd.getCtorType());
+
+    // Returns in a destructor body go to the member and base destructors.
+    if (dtor)
+      ReturnPoint = XIL_CFGAddPoint(endLoc);
+
+    TranslateStmt(&point, fd->getBody());
+
+    if (dtor) {
+      XIL_CFGEdgeSkip(point, ReturnPoint);
+      point = ReturnPoint;
+      UpdateLocation(point, fd->getBody()->getEndLoc());
+      TranslateDestructorEpilogue(&point, dtor);
+    }
+  }
 
   // Connect any fall through to the exit point.
   XIL_CFGEdgeSkip(point, ExitPoint);
@@ -1969,7 +3295,7 @@ void BlockTranslator::GenerateGlobal(const VarDecl *vd, XIL_Var var)
   XIL_CFGSetEndLocation(endLoc);
 
   EntryPoint = LastPoint = XIL_CFGAddPoint(beginLoc);
-  ExitPoint = XIL_CFGAddPoint(endLoc);
+  ExitPoint = ReturnPoint = XIL_CFGAddPoint(endLoc);
   XIL_CFGSetEntryPoint(EntryPoint);
   XIL_CFGSetExitPoint(ExitPoint);
 
@@ -2005,7 +3331,7 @@ void BlockTranslator::GenerateFuncName(const PredefinedExpr *pe, XIL_Var var)
   XIL_CFGSetEndLocation(loc);
 
   EntryPoint = LastPoint = XIL_CFGAddPoint(loc);
-  ExitPoint = XIL_CFGAddPoint(loc);
+  ExitPoint = ReturnPoint = XIL_CFGAddPoint(loc);
   XIL_CFGSetEntryPoint(EntryPoint);
   XIL_CFGSetExitPoint(ExitPoint);
 
