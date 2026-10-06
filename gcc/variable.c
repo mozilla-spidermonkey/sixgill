@@ -46,7 +46,7 @@ bool XIL_IsDestructor(tree decl)
   return false;
 }
 
-static struct XIL_CString
+struct XIL_CString
 JoinCStrings(const char* prefix, char sep, const char* suffix)
 {
     struct XIL_CString str = XIL_AllocCString(strlen(prefix) + 1 + strlen(suffix) + 1);
@@ -119,6 +119,14 @@ struct XIL_CString XIL_GlobalName(tree decl, bool for_context)
     return name;
   const char *mangled = decl_as_string(DECL_ASSEMBLER_NAME(decl), TFF_DECL_SPECIFIERS);
   XIL_ReleaseCString(&name);
+
+  // symbols with internal linkage are prefixed with the name of their file,
+  // so that they don't collide with symbols in other translation units.
+  // static locals are already distinguished by their function's name.
+  bool static_local = TREE_CODE(decl) == VAR_DECL && DECL_FUNCTION_SCOPE_P(decl);
+  if (!TREE_PUBLIC(decl) && !static_local && strcmp(mangled, "main") != 0)
+    return JoinCStrings(XIL_Basename(DECL_SOURCE_FILE(decl)), ':', mangled);
+
   struct XIL_CString full_name = XIL_AllocCString(strlen(mangled) + 1);
   strcpy((char*) full_name.str, mangled);
   return full_name;

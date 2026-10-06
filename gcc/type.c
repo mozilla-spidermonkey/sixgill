@@ -163,6 +163,12 @@ bool XIL_IsAnonymous(tree type)
   if (idnode && TREE_CODE(idnode) == IDENTIFIER_NODE)
     return false;
 
+  // lambda closure types are named by their location (see MakeNameTULocal),
+  // not by their first use, which depends on the order things are translated
+  // in and can differ between translation units.
+  if (c_dialect_cxx() && LAMBDA_TYPE_P(TYPE_MAIN_VARIANT(type)))
+    return false;
+
   // in C, a TYPE_DECL name comes from a typedef of an anonymous struct, or a
   // builtin type such as __va_list_tag. use that name rather than naming the
   // type after its first use.
@@ -307,8 +313,11 @@ render_decl(tree decl)
         XIL_SetCString(&str, decl_as_string(decl, stringify_flags), 0);
     }
 
+    // local classes in function templates have template info, but are named
+    // by their function, which includes the template arguments.
     bool is_template =
-        TYPE_LANG_SPECIFIC(type) && CLASSTYPE_TEMPLATE_INFO(type);
+        TYPE_LANG_SPECIFIC(type) && CLASSTYPE_TEMPLATE_INFO(type) &&
+        !DECL_FUNCTION_SCOPE_P(decl);
     if (!is_template) {
         return str;
     }
@@ -323,21 +332,77 @@ render_decl(tree decl)
     return str;
 }
 
-// Make a name local to the current translation unit by prepending it with a
-// "translation unit ID" ("TU" and a random number) followed by '#' and the
-// basename of the source file it is defined in. (The latter isn't necessary,
-// but makes it easier to know where something is coming from.)
+// The name of a function containing a lambda, for use in the name of the
+// lambda's closure type. This is the mangled name, with a file prefix if the
+// function is not public. Unlike XIL_GlobalName, this doesn't translate the
+// function's type (which may include the closure type), doesn't use gcc's
+// readable names for functions within lambdas, and uses the complete
+// constructor or destructor rather than the abstract one, all to match the
+// clang front end.
+static const char *XIL_LambdaContextName(tree function)
+{
+  // The clones follow the abstract constructor or destructor. (FOR_EACH_CLONE
+  // can't be used, as it refers to data that only exists in cc1plus.)
+  if (DECL_CONSTRUCTOR_P(function) || DECL_DESTRUCTOR_P(function)) {
+    for (tree clone = DECL_CHAIN(function);
+         clone && TREE_CODE(clone) == FUNCTION_DECL && DECL_NAME(clone);
+         clone = DECL_CHAIN(clone)) {
+      const char *kind = IDENTIFIER_POINTER(DECL_NAME(clone));
+      if (strncmp(kind, "__ct_", 5) != 0 && strncmp(kind, "__dt_", 5) != 0)
+        break;
+      if (strcmp(kind, "__ct_comp ") == 0 || strcmp(kind, "__dt_comp ") == 0) {
+        function = clone;
+        break;
+      }
+    }
+  }
+
+  const char *mangled = IDENTIFIER_POINTER(DECL_ASSEMBLER_NAME(function));
+  if (TREE_PUBLIC(function))
+    return mangled;
+  struct XIL_CString name =
+    JoinCStrings(XIL_Basename(DECL_SOURCE_FILE(function)), ':', mangled);
+  return name.str;
+}
+
+// Make a name local to the file a declaration appears in, by prefixing it with
+// the file's basename. Lambda closures and other anonymous types (which gcc
+// names ._anon_N, with a number that restarts for every compilation unit) are
+// named by their line instead: <lambda:LINE> or <unnamed:LINE>. Lambdas in
+// functions are prefixed with the function's name instead of the file's, as
+// each instantiation of a template has its own closure types. The clang front
+// end uses the same names.
 static void MakeNameTULocal(tree decl, struct XIL_CString *name) {
-    // Since the process containing this plugin is run once per translation
-    // unit, we can just use a static variable to generate an ID for the whole
-    // process.
-    static int compilation_unit_id = rand();
-    const char* file = DECL_SOURCE_FILE(decl);
-    const char* slash = strrchr(file, '/');
-    if (slash != NULL)
-      file = slash + 1;
-    struct XIL_CString full_name = XIL_AllocCString(11 + strlen(file) + strlen(name->str) + 2);
-    sprintf((char*) full_name.str, "TU%08x#%s:%s", compilation_unit_id, file, name->str);
+    const char* file = XIL_Basename(DECL_SOURCE_FILE(decl));
+    char buf[64];
+    const char *local_name = name->str;
+    tree type = TREE_TYPE(decl);
+    bool lambda = type && LAMBDA_TYPE_P(type);
+    if (strncmp(name->str, "._anon_", 7) == 0) {
+      snprintf(buf, sizeof(buf), "<%s:%d>",
+               lambda ? "lambda" : "unnamed", DECL_SOURCE_LINE(decl));
+      local_name = buf;
+    }
+    // (Functions in template definitions can't be mangled, and their types
+    // are never generated.)
+    tree function = lambda ? decl_function_context(decl) : NULL_TREE;
+    if (function && !uses_template_parms(function)) {
+      // Lambdas within lambdas are named after the enclosing closure type, as
+      // gcc and clang mangle lambda functions differently.
+      struct XIL_CString context = { NULL, 0 };
+      if (DECL_CONTEXT(function) && TYPE_P(DECL_CONTEXT(function)) &&
+          LAMBDA_TYPE_P(DECL_CONTEXT(function))) {
+        tree closure = TYPE_NAME(DECL_CONTEXT(function));
+        XIL_SetCString(&context, IDENTIFIER_POINTER(DECL_NAME(closure)), 0);
+        MakeNameTULocal(closure, &context);
+      } else {
+        XIL_SetCString(&context, XIL_LambdaContextName(function), 0);
+      }
+      struct XIL_CString full_name = JoinCStrings(context.str, ':', local_name);
+      XIL_AssignCString(name, &full_name);
+      return;
+    }
+    struct XIL_CString full_name = JoinCStrings(file, ':', local_name);
     XIL_AssignCString(name, &full_name);
 }
 
@@ -378,13 +443,27 @@ struct XIL_CString XIL_QualifiedName(tree decl)
     }
   }
   else if (TREE_CODE(context) == NAMESPACE_DECL) {
-    // watch out for unnamed namespaces (?!).
-    if (DECL_NAME(context) == NULL)
-      return name;
+    // types in anonymous namespaces are local to the file they are defined in,
+    // so prefix them with the file name to keep them from colliding with
+    // types of the same name in other translation units.
+    if (DECL_NAME(context) == NULL) {
+      const char *file = XIL_Basename(DECL_SOURCE_FILE(decl));
+      struct XIL_CString full_name = JoinCStrings(file, ':', name.str);
+      XIL_ReleaseCString(&name);
+      return full_name;
+    }
     context_name = XIL_QualifiedName(context);
   }
   else if (TREE_CODE(context) == FUNCTION_DECL) {
-    context_name = XIL_GlobalName(context, true);
+    // Types in lambdas are named after the closure type, as gcc and clang
+    // mangle lambda functions differently.
+    tree closure = DECL_CONTEXT(context);
+    if (closure && TYPE_P(closure) && LAMBDA_TYPE_P(closure)) {
+      XIL_SetCString(&context_name, IDENTIFIER_POINTER(DECL_NAME(TYPE_NAME(closure))), 0);
+      MakeNameTULocal(TYPE_NAME(closure), &context_name);
+    } else {
+      context_name = XIL_GlobalName(context, true);
+    }
   }
   else {
     TREE_UNEXPECTED(context);
@@ -419,6 +498,214 @@ bool XIL_IsBaseField(tree field, bool *offset_zero)
   }
 
   return false;
+}
+
+// gcc names the parameters of generic lambdas "auto:N", where N counts the
+// abbreviated template parameters in the translation unit. Drop the count so
+// that the name of a type doesn't depend on what came before it.
+static const char *XIL_StripAutoCounts(const char *name)
+{
+  if (!strstr(name, "auto:"))
+    return name;
+  static char *buf = NULL;
+  static size_t buflen = 0;
+  size_t len = strlen(name) + 1;
+  if (len > buflen) {
+    buf = (char *) xrealloc(buf, len);
+    buflen = len;
+  }
+  char *out = buf;
+  for (const char *p = name; *p; ) {
+    if (strncmp(p, "auto:", 5) == 0 && ISDIGIT(p[5])) {
+      memcpy(out, "auto", 4);
+      out += 4;
+      p += 5;
+      while (ISDIGIT(*p))
+        p++;
+    } else {
+      *out++ = *p++;
+    }
+  }
+  *out = 0;
+  return buf;
+}
+
+// walk_tree callback for XIL_DefaultIsInstantiated.
+static tree XIL_FindIncompleteScope(tree *tp, int *walk_subtrees, void *data)
+{
+  tree t = *tp;
+  if (!TYPE_P(t))
+    return NULL_TREE;
+  *walk_subtrees = 0;
+
+  tree args = (tree) data;
+  if (TREE_CODE(t) == TYPENAME_TYPE) {
+    // Resolving a typename (including those from alias templates) requires
+    // its scope, then the type it names, to be complete.
+    tree context = TYPE_CONTEXT(t);
+    int walk = 1;
+    if (XIL_FindIncompleteScope(&context, &walk, data))
+      return t;
+  } else if (!CLASS_TYPE_P(t) || !uses_template_parms(t)) {
+    return NULL_TREE;
+  }
+
+  tree type = tsubst(t, args, tf_none, NULL_TREE);
+  if (!type || type == error_mark_node ||
+      (CLASS_TYPE_P(type) && !COMPLETE_TYPE_P(type)))
+    return t;
+  return NULL_TREE;
+}
+
+// Whether substituting a default template argument would only use class
+// template specializations that have already been instantiated. The default
+// may be ill-formed for the arguments of a specialization, eg when it names a
+// trait that isn't specialized for them, which is why the argument was given
+// explicitly. Instantiating it then gives errors that can't be suppressed
+// (after which gcc may crash), so it must be avoided. When the argument was
+// left out, gcc has already instantiated everything the default needs.
+static bool XIL_DefaultIsInstantiated(tree def, tree args)
+{
+  return !walk_tree_without_duplicates(&def, XIL_FindIncompleteScope, args);
+}
+
+// Compute how many of the template arguments of a class template
+// specialization differ from their default values: trailing arguments that
+// are the same as their defaults are left out of its name, as the clang
+// front end does. (gcc's own count of non-default arguments depends on how
+// the specialization was first named, which would give the same type
+// different names in different translation units.)
+static int XIL_NonDefaultTemplateArgCount(tree tinfo)
+{
+  tree tmpl = most_general_template(TI_TEMPLATE(tinfo));
+  if (!tmpl || TREE_CODE(tmpl) != TEMPLATE_DECL)
+    return -1;
+
+  // Leave the arguments of dependent types (in template definitions) alone.
+  tree full_args = TI_ARGS(tinfo);
+  if (uses_template_parms(full_args))
+    return -1;
+
+  tree args = INNERMOST_TEMPLATE_ARGS(full_args);
+  tree parms = INNERMOST_TEMPLATE_PARMS(DECL_TEMPLATE_PARMS(tmpl));
+  int count = TREE_VEC_LENGTH(args);
+  if (TREE_VEC_LENGTH(parms) != count)
+    return -1;
+
+  while (count > 0) {
+    tree parm = TREE_VEC_ELT(parms, count - 1);
+    if (parm == error_mark_node || !TREE_PURPOSE(parm))
+      break;
+    tree def = TREE_PURPOSE(parm);
+    tree decl = TREE_VALUE(parm);
+    tree arg = TREE_VEC_ELT(args, count - 1);
+
+    // Defaults can only refer to earlier parameters, so substituting the
+    // full argument list is fine.
+    tree value;
+    if (TREE_CODE(decl) == TEMPLATE_DECL) {
+      // gcc can't substitute into a template template default (it asserts
+      // on alias templates), but they are rarely dependent.
+      if (uses_template_parms(def))
+        break;
+      value = def;
+    } else if (TREE_CODE(decl) == TYPE_DECL) {
+      value = tsubst(def, full_args, tf_none, NULL_TREE);
+    } else {
+      if (!XIL_DefaultIsInstantiated(def, full_args))
+        break;
+      value = tsubst_expr(def, full_args, tf_none, NULL_TREE, false);
+      if (value && value != error_mark_node)
+        value = fold(maybe_constant_value(value));
+    }
+    if (!value || value == error_mark_node)
+      break;
+
+    bool equal;
+    if (TYPE_P(arg) && TYPE_P(value))
+      equal = same_type_p(arg, value);
+    else if (TREE_CODE(arg) == INTEGER_CST && TREE_CODE(value) == INTEGER_CST)
+      equal = wi::to_widest(arg) == wi::to_widest(value);
+    else
+      equal = template_args_equal(arg, value);
+    if (!equal)
+      break;
+    count--;
+  }
+  return count;
+}
+
+// Set the count of non-default template arguments on a type and the types
+// within it, for use when printing the type's name.
+static void XIL_SetDefaultTemplateArgCounts(tree type, int depth)
+{
+  if (!type || depth > 30)
+    return;
+
+  switch (TREE_CODE(type)) {
+  case POINTER_TYPE:
+  case REFERENCE_TYPE:
+  case ARRAY_TYPE:
+    XIL_SetDefaultTemplateArgCounts(TREE_TYPE(type), depth + 1);
+    break;
+
+  case FUNCTION_TYPE:
+  case METHOD_TYPE: {
+    XIL_SetDefaultTemplateArgCounts(TREE_TYPE(type), depth + 1);
+    for (tree arg = TYPE_ARG_TYPES(type); arg; arg = TREE_CHAIN(arg))
+      XIL_SetDefaultTemplateArgCounts(TREE_VALUE(arg), depth + 1);
+    break;
+  }
+
+  case RECORD_TYPE:
+  case UNION_TYPE: {
+    if (TYPE_PTRMEMFUNC_P(type)) {
+      XIL_SetDefaultTemplateArgCounts(TYPE_PTRMEMFUNC_FN_TYPE(type), depth + 1);
+      break;
+    }
+    if (!CLASS_TYPE_P(type))
+      break;
+
+    // A specialization named with typedefs in its arguments is a different
+    // type node from the canonical one, with its own argument vector.
+    if (TYPE_CANONICAL(type) && TYPE_CANONICAL(type) != type)
+      XIL_SetDefaultTemplateArgCounts(TYPE_CANONICAL(type), depth + 1);
+    if (TYPE_MAIN_VARIANT(type) != type)
+      XIL_SetDefaultTemplateArgCounts(TYPE_MAIN_VARIANT(type), depth + 1);
+
+    // The enclosing class appears in the name too.
+    tree context = TYPE_CONTEXT(type);
+    if (context && TYPE_P(context))
+      XIL_SetDefaultTemplateArgCounts(context, depth + 1);
+
+    tree tinfo = CLASSTYPE_TEMPLATE_INFO(type);
+    if (!tinfo || !CLASSTYPE_USE_TEMPLATE(type))
+      break;
+
+    tree args = INNERMOST_TEMPLATE_ARGS(TI_ARGS(tinfo));
+    int count = XIL_NonDefaultTemplateArgCount(tinfo);
+    if (count >= 0)
+      SET_NON_DEFAULT_TEMPLATE_ARGS_COUNT(args, count);
+
+    for (int i = 0; i < TREE_VEC_LENGTH(args); i++) {
+      tree arg = TREE_VEC_ELT(args, i);
+      if (ARGUMENT_PACK_P(arg)) {
+        tree pack = ARGUMENT_PACK_ARGS(arg);
+        for (int j = 0; j < TREE_VEC_LENGTH(pack); j++) {
+          if (TYPE_P(TREE_VEC_ELT(pack, j)))
+            XIL_SetDefaultTemplateArgCounts(TREE_VEC_ELT(pack, j), depth + 1);
+        }
+      }
+      else if (TYPE_P(arg)) {
+        XIL_SetDefaultTemplateArgCounts(arg, depth + 1);
+      }
+    }
+    break;
+  }
+
+  default:
+    break;
+  }
 }
 
 const char* XIL_CSUName(tree type, const char *name)
@@ -462,8 +749,14 @@ const char* XIL_CSUName(tree type, const char *name)
   // structure.
 
   // template instantiations do not have names filled in. get one now.
-  if (c_dialect_cxx() && !*field_csu && CLASS_TYPE_P(type) && CLASSTYPE_USE_TEMPLATE(type)) {
-    *field_csu = XIL_TypeCSU(type_as_string(type, TFF_CHASE_TYPEDEF_IF_SAFE), NULL);
+  // use the main variant so that cv-qualified variants don't get names like
+  // "const Foo<int>", and chase typedefs in the template arguments so that
+  // the name doesn't depend on how the type was spelled. local classes in function templates are named by the
+  // function's mangled name instead, as for other local classes.
+  if (c_dialect_cxx() && !*field_csu && CLASS_TYPE_P(type) && CLASSTYPE_USE_TEMPLATE(type) &&
+      !(TYPE_NAME(type) && DECL_FUNCTION_SCOPE_P(TYPE_NAME(type)))) {
+    XIL_SetDefaultTemplateArgCounts(TYPE_MAIN_VARIANT(type), 0);
+    *field_csu = XIL_TypeCSU(XIL_StripAutoCounts(type_as_string(TYPE_MAIN_VARIANT(type), TFF_CHASE_TYPEDEF)), NULL);
   }
 
   // cp uses TYPE_DECLs for structures with explicit names, as the
@@ -471,7 +764,9 @@ const char* XIL_CSUName(tree type, const char *name)
   // assignment now, except for the fake names on anonymous structures.
   // we need to do this now as opposed to finish_type as we can see the type
   // before it is finished in some cases.
-  tree idnode = TYPE_NAME(type);
+  // use the main variant's name, so that typedefs of the type (eg
+  // "typedef pthread_mutex_t __gthread_mutex_t") don't change its name.
+  tree idnode = TYPE_NAME(TYPE_MAIN_VARIANT(type));
   if (c_dialect_cxx() && !*field_csu && idnode &&
       TREE_CODE(idnode) == TYPE_DECL && !XIL_IsAnonymousCxx(idnode)) {
 
@@ -523,6 +818,21 @@ static void translate_all_virtual_methods(tree type)
     if (TREE_CODE(decl) == FIELD_DECL && XIL_IsBaseField(decl, &offset_zero))
       translate_all_virtual_methods(TREE_TYPE(decl));
   }
+}
+
+// Find the destructor variant of type that overrides a base class's virtual
+// destructor variant (eg the complete or deleting destructor).
+// look_for_overrides_here doesn't match these, as their classes' destructors
+// have different names. The variants' names identify their kind.
+static tree XIL_FindDestructorClone(tree type, tree base_dtor)
+{
+  const char *kind = IDENTIFIER_POINTER(DECL_NAME(base_dtor));
+  for (tree decl = TYPE_FIELDS(type); decl; decl = DECL_CHAIN(decl)) {
+    if (TREE_CODE(decl) == FUNCTION_DECL && DECL_DESTRUCTOR_P(decl) &&
+        strcmp(IDENTIFIER_POINTER(DECL_NAME(decl)), kind) == 0)
+      return decl;
+  }
+  return NULL_TREE;
 }
 
 struct XIL_VirtualFunction* XIL_GetFunctionFields(tree type, bool fields_are_up_to_date)
@@ -612,7 +922,11 @@ struct XIL_VirtualFunction* XIL_GetFunctionFields(tree type, bool fields_are_up_
 
   for (virt = *pvirt; virt; virt = virt->next) {
     gcc_assert(virt->decl);
-    tree decl = look_for_overrides_here(type, virt->decl);
+    tree decl;
+    if (DECL_DESTRUCTOR_P(virt->decl))
+      decl = XIL_FindDestructorClone(type, virt->decl);
+    else
+      decl = look_for_overrides_here(type, virt->decl);
     if (!decl) continue;
 
     virt->decl = decl;
@@ -753,7 +1067,7 @@ XIL_Type XIL_TranslateRecordType(tree type)
 
     if (!name.str) {
       if (c_dialect_cxx())
-        name.str = type_as_string(type, TFF_CHASE_TYPEDEF);
+        name.str = XIL_StripAutoCounts(type_as_string(type, TFF_CHASE_TYPEDEF));
       else
         name.str = "<unknown-type>";
     }
@@ -794,6 +1108,10 @@ XIL_Type XIL_TranslateRecordType(tree type)
     if (!strncmp(name.str, bad_prefix, strlen(bad_prefix)))
       pgenerate = NULL;
   }
+
+  // the RTTI structures have names like __si_class_type_info_pseudo_9.
+  if (strstr(name.str, "_type_info_pseudo"))
+    pgenerate = NULL;
 
   XIL_Type xil_csu_type = XIL_TypeCSU(name.str, pgenerate);
 
@@ -916,8 +1234,10 @@ XIL_Type XIL_TranslateFunctionType(tree type)
       }
     }
 
+    // the attributes of a class type are the class's annotations, which are
+    // recorded on the class's CSU, not the argument.
     XIL_AnnotationList annotations = XIL_MakeAnnotationList();
-    tree attr = TYPE_ATTRIBUTES(arg_type);
+    tree attr = RECORD_OR_UNION_TYPE_P(arg_type) ? NULL : TYPE_ATTRIBUTES(arg_type);
     if (attr && !arg_ann_array)
       arg_ann_array = (XIL_AnnotationList *) xcalloc(arg_capacity, sizeof(XIL_AnnotationList));
     while (attr) {

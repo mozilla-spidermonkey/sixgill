@@ -24,6 +24,8 @@
 
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Decl.h"
+#include "clang/AST/DeclCXX.h"
+#include "clang/AST/GlobalDecl.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/Mangle.h"
 #include "clang/AST/Stmt.h"
@@ -36,6 +38,10 @@
 #include <vector>
 
 #include <imlang/interface.h>
+
+namespace clang {
+class Sema;
+}
 
 namespace xgill {
 
@@ -236,6 +242,9 @@ public:
 
   std::unique_ptr<clang::MangleContext> Mangler;
 
+  // Used to substitute default template arguments, when available.
+  clang::Sema *S = nullptr;
+
   // Generate everything in the translation unit.
   void TranslateUnit();
 
@@ -259,7 +268,15 @@ public:
   XIL_Type TranslateFunctionType(clang::QualType type,
                                  const clang::FunctionDecl *annotated = nullptr);
   XIL_Field TranslateField(const clang::FieldDecl *fd);
+  std::string LambdaCaptureName(const clang::FieldDecl *fd);
   int TypeBytes(clang::QualType type);
+
+  // The type of a method, including the class for non-static methods.
+  XIL_Type TranslateMethodType(const clang::CXXMethodDecl *md,
+                               bool annotated = false);
+
+  // The name of a function with a particular constructor/destructor variant.
+  std::string FunctionName(clang::GlobalDecl gd);
 
   // Give an anonymous struct/union type (or pointer/array of one) a name
   // based on how it is first used, as the gcc plugin does.
@@ -269,11 +286,67 @@ public:
   // Whether translation of the active block hit an error in a type.
   bool TypeError = false;
 
+  std::string RecordName(const clang::RecordDecl *rd);
+
 private:
   // CSU names that have been assigned to records.
   llvm::DenseMap<const clang::RecordDecl*, std::string> RecordNames;
 
-  std::string RecordName(const clang::RecordDecl *rd);
+  // Names assigned to pointer to member function types, which gcc represents
+  // as anonymous structures.
+  llvm::DenseMap<const clang::Type*, std::string> MemberPointerNames;
+
+  // Set while printing the elements of a template argument pack, where gcc
+  // doesn't leave out default template arguments.
+  bool InArgumentPack = false;
+  XIL_Type TranslateMemberFunctionPointer(clang::QualType type);
+
+  // The fields of a struct/class in gcc's order: the class's own vtable
+  // pointer (which has no field), its bases, its data members, and its
+  // virtual bases. Unnamed entries are named field:N by their index.
+  struct LayoutEntry {
+    const clang::CXXRecordDecl *base = nullptr;
+    const clang::FieldDecl *field = nullptr;
+    int index = 0;
+    int offset = 0;
+  };
+  struct Layout {
+    std::vector<LayoutEntry> entries;
+  };
+  llvm::DenseMap<const clang::RecordDecl*, Layout> Layouts;
+  const Layout &GetLayout(const clang::RecordDecl *rd);
+  int FieldIndex(const clang::FieldDecl *fd);
+  XIL_Field BaseField(const clang::RecordDecl *rd, const LayoutEntry &entry);
+
+  // Virtual functions of a class, as computed by XIL_GetFunctionFields in
+  // gcc/type.c. Destructors are represented by their complete and deleting
+  // variants.
+  struct VirtualFunction {
+    const clang::CXXMethodDecl *fieldMethod;  // method whose field is used
+    const clang::CXXMethodDecl *decl;         // final overrider in the class
+    clang::CXXDtorType dtorKind = clang::Dtor_Complete;
+    XIL_Field base = nullptr;
+  };
+  llvm::DenseMap<const clang::CXXRecordDecl*, std::vector<VirtualFunction>> VirtualFunctions;
+  const std::vector<VirtualFunction> &GetVirtualFunctions(const clang::CXXRecordDecl *rd);
+  XIL_Field MethodField(const clang::CXXMethodDecl *md, clang::CXXDtorType dtorKind);
+  void AddCxxMembers(const clang::CXXRecordDecl *rd);
+
+  // C++ names spelled as gcc's type printer spells them (typenames.cpp).
+  struct Declarator;
+  std::string GccTypeString(clang::QualType type);
+  std::string GccTypeString(clang::QualType type, const Declarator &decl);
+  std::string GccBaseTypeName(clang::QualType canon);
+  std::string GccScope(const clang::DeclContext *dc);
+  std::string GccFunctionString(const clang::FunctionDecl *fd);
+  std::string GccTemplateArgument(const clang::TemplateArgument &arg);
+  std::string GccTemplateArgs(const clang::ClassTemplateSpecializationDecl *spec);
+  bool IsDefaultTemplateArgument(const clang::ClassTemplateSpecializationDecl *spec,
+                                 llvm::ArrayRef<clang::TemplateArgument> args,
+                                 clang::TemplateParameterList *params, unsigned index);
+  std::string GccRecordTypeName(const clang::RecordDecl *rd);
+  std::string CxxRecordName(const clang::RecordDecl *rd);
+  std::string NamespaceName(const clang::NamespaceDecl *ns);
   XIL_Type TranslateRecordType(const clang::RecordDecl *rd);
   XIL_Type TranslateIntType(clang::QualType type);
 
@@ -292,6 +365,10 @@ private:
 
   friend class BlockTranslator;
 };
+
+// Whether a class is a template instantiation or a member of one, in which
+// case gcc names it with its type printer.
+bool IsTemplateInstantiation(const clang::RecordDecl *rd);
 
 // Collect the annotate attributes on a declaration.
 XIL_AnnotationList DeclAnnotations(const clang::Decl *d);

@@ -19,4 +19,12 @@ int cp_type_quals(const_tree t) { abort(); return 0; }
 tree look_for_overrides_here(tree t, tree tt) { abort(); return NULL; }
 tree get_template_info(const_tree t) { abort(); return NULL; }
 tree get_innermost_template_args(tree t, int n) { abort(); return NULL; }
+tree most_general_template(tree t) { abort(); return NULL; }
+tree tsubst(tree t, tree args, tsubst_flags_t f, tree in) { abort(); return NULL; }
+tree tsubst_expr(tree t, tree args, tsubst_flags_t f, tree in, bool b) { abort(); return NULL; }
+int template_args_equal(tree a, tree b, bool p) { abort(); return 0; }
+tree maybe_constant_value(tree t, tree d, bool m) { abort(); return NULL; }
+tree cp_build_qualified_type_real(tree t, int q, tsubst_flags_t f) { abort(); return NULL; }
+bool comptypes(tree a, tree b, int s) { abort(); return false; }
+int uses_template_parms(tree t) { abort(); return 0; }
 EXTERN_END

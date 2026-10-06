@@ -22,7 +22,7 @@ include ../config.mk
 # the same C++ standard library as clang (libstdc++).
 PLUGIN_CXX = $(CLANG_DIR)/bin/clang++
 
-XGILL_CLANG_OBJS = plugin.o translate.o types.o names.o
+XGILL_CLANG_OBJS = plugin.o translate.o types.o typenames.o names.o
 
 all: xgill-clang.so
 

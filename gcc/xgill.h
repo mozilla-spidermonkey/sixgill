@@ -427,6 +427,9 @@ struct XIL_CString
 
 const char* XIL_Basename(const char* path);
 
+// join two strings with a separator character between them.
+struct XIL_CString JoinCStrings(const char* prefix, char sep, const char* suffix);
+
 // set a XIL_CString to a new value, releasing the old one if needed.
 // `capacity` is the number of bytes whose ownership is being transferred to
 // `xstr`, or 0 if ownership is not being granted.

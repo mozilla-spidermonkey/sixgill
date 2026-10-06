@@ -411,8 +411,10 @@ bool BlockTranslator::TryFoldConstant(Env &env, const Expr *e)
   if (type->isIntegralOrEnumerationType()) {
     if (isa<IntegerLiteral>(e) || !e->isIntegerConstantExpr(Ctx))
       return false;
-    llvm::APSInt value = e->EvaluateKnownConstInt(Ctx);
-    std::string str = IntegerString(value);
+    Expr::EvalResult result;
+    if (!e->EvaluateAsInt(result, Ctx, Expr::SE_NoSideEffects) || !result.Val.isInt())
+      return false;
+    std::string str = IntegerString(result.Val.getInt());
     ProcessResult(env, XIL_ExpIntStr(str.c_str()));
     return true;
   }

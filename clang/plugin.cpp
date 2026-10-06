@@ -93,8 +93,19 @@ public:
   bool shouldVisitTemplateInstantiations() const { return true; }
   bool shouldVisitImplicitCode() const { return true; }
 
+  // Visit declarations nested in a function (lambda call operators, local
+  // classes' methods, static locals) before the function itself. This is the
+  // order gcc finishes them in, which matters for how anonymous types are
+  // named by their first use.
+  bool shouldTraversePostOrder() const { return true; }
+
   bool VisitFunctionDecl(FunctionDecl *fd) {
+    // Trivial special members (eg implicit default constructors that do
+    // nothing) are not real functions, and gcc does not generate them.
+    if (fd->isTrivial())
+      return true;
     if (fd->doesThisDeclarationHaveABody() && !fd->isDependentContext() &&
+        !fd->isTemplated() &&
         !fd->isInvalidDecl() && !fd->isDeleted())
       Decls.push_back({fd, true});
     return true;
@@ -103,7 +114,7 @@ public:
   bool VisitVarDecl(VarDecl *vd) {
     // Global variables and static locals get an initializer block, whether
     // or not they have an initializer, as with the gcc plugin.
-    if (isa<ParmVarDecl>(vd) || !vd->hasGlobalStorage() ||
+    if (isa<ParmVarDecl>(vd) || !vd->hasGlobalStorage() || vd->isTemplated() ||
         vd->isInvalidDecl() || vd->getDeclContext()->isDependentContext())
       return true;
     bool definition =
@@ -168,7 +179,8 @@ namespace {
 
 class XgillConsumer : public ASTConsumer {
 public:
-  explicit XgillConsumer(const PluginOptions &options) : Options(options) {}
+  XgillConsumer(CompilerInstance &ci, const PluginOptions &options)
+    : CI(ci), Options(options) {}
 
   void HandleTranslationUnit(ASTContext &ctx) override {
     // Don't try to generate anything for code with errors.
@@ -185,6 +197,8 @@ public:
     XIL_SetNormalizeDirectory(Options.basedir.empty() ? nullptr : Options.basedir.c_str());
 
     Translator translator(ctx, Options);
+    if (CI.hasSema())
+      translator.S = &CI.getSema();
     translator.TranslateUnit();
 
     XIL_WriteGenerated();
@@ -196,6 +210,8 @@ public:
   }
 
 private:
+  CompilerInstance &CI;
+
   // A copy: the action holding the original may be destroyed before the end
   // of the translation unit.
   PluginOptions Options;
@@ -205,7 +221,7 @@ class XgillAction : public PluginASTAction {
 public:
   std::unique_ptr<ASTConsumer>
   CreateASTConsumer(CompilerInstance &ci, llvm::StringRef) override {
-    return std::make_unique<XgillConsumer>(Options);
+    return std::make_unique<XgillConsumer>(ci, Options);
   }
 
   bool ParseArgs(const CompilerInstance &ci,

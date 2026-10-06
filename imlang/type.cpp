@@ -1007,7 +1007,30 @@ void CompositeCSU::AddFunctionField(Field *field, Field *base,
 {
   if (m_function_fields == NULL)
     m_function_fields = new Vector<FunctionField>();
-  m_function_fields->PushBack(FunctionField(field, base, function));
+
+  // Keep the function fields in a canonical order (by base field, field, and
+  // function), rather than whatever order the front end generates them in.
+  // gcc's order depends on its internal tables, and differs from clang's.
+  auto name = [](const char *s) { return s ? s : ""; };
+  auto compare = [&](const FunctionField &a, const FunctionField &b) {
+    int cmp = strcmp(name(a.base ? a.base->GetName()->Value() : NULL),
+                     name(b.base ? b.base->GetName()->Value() : NULL));
+    if (cmp == 0)
+      cmp = strcmp(a.field->GetName()->Value(), b.field->GetName()->Value());
+    if (cmp == 0)
+      cmp = strcmp(name(a.function ? a.function->GetName()->Value() : NULL),
+                   name(b.function ? b.function->GetName()->Value() : NULL));
+    return cmp;
+  };
+
+  FunctionField entry(field, base, function);
+  m_function_fields->PushBack(entry);
+  size_t ind = m_function_fields->Size() - 1;
+  while (ind > 0 && compare(m_function_fields->At(ind - 1), entry) > 0) {
+    m_function_fields->At(ind) = m_function_fields->At(ind - 1);
+    ind--;
+  }
+  m_function_fields->At(ind) = entry;
 }
 
 void CompositeCSU::AddBaseClass(String *base)

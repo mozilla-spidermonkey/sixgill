@@ -19,8 +19,10 @@
 
 #include "xgill-clang.h"
 
+#include "clang/AST/ASTLambda.h"
 #include "clang/AST/Attr.h"
 #include "clang/AST/RecordLayout.h"
+#include "clang/Basic/SourceManager.h"
 
 using namespace clang;
 
@@ -146,9 +148,10 @@ XIL_Type Translator::TranslateType(QualType type)
     return TranslateType(type->castAs<AtomicType>()->getValueType());
 
   case Type::MemberPointer:
-    // gcc represents pointers to member functions as a structure.
+    // gcc represents pointers to member functions as a structure, and
+    // doesn't handle pointers to data members.
     if (canon->isMemberFunctionPointerType())
-      return XIL_TypeCSU("__ptr_member", nullptr);
+      return TranslateMemberFunctionPointer(canon);
     return XIL_TypeError();
 
   default:
@@ -157,13 +160,16 @@ XIL_Type Translator::TranslateType(QualType type)
   }
 }
 
-XIL_Type Translator::TranslateFunctionType(QualType type, const FunctionDecl *annotated)
+// Translate a function type. thisCSU is the class of a non-static method.
+static XIL_Type MakeFunctionType(Translator &T, QualType type,
+                                 const FunctionDecl *annotated,
+                                 const char *thisCSU)
 {
   const FunctionType *ft = type->getAs<FunctionType>();
   if (!ft)
     return XIL_TypeError();
 
-  XIL_Type ret = TranslateType(ft->getReturnType());
+  XIL_Type ret = T.TranslateType(ft->getReturnType());
 
   std::vector<XIL_Type> args;
   std::vector<XIL_AnnotationList> argAnnotations;
@@ -171,7 +177,7 @@ XIL_Type Translator::TranslateFunctionType(QualType type, const FunctionDecl *an
 
   if (const FunctionProtoType *fpt = dyn_cast<FunctionProtoType>(ft)) {
     for (unsigned i = 0; i < fpt->getNumParams(); i++) {
-      args.push_back(TranslateType(fpt->getParamType(i)));
+      args.push_back(T.TranslateType(fpt->getParamType(i)));
 
       XIL_AnnotationList annots = XIL_MakeAnnotationList();
       if (annotated && i < annotated->getNumParams())
@@ -187,7 +193,7 @@ XIL_Type Translator::TranslateFunctionType(QualType type, const FunctionDecl *an
 
   // gcc never marks function types as varargs, so neither do we.
   XIL_Type result =
-    XIL_TypeFunction(ret, nullptr, 0, args.data(),
+    XIL_TypeFunction(ret, thisCSU, 0, args.data(),
                      anyArgAnnotations ? argAnnotations.data() : nullptr,
                      (int) args.size(), annotations);
 
@@ -197,31 +203,64 @@ XIL_Type Translator::TranslateFunctionType(QualType type, const FunctionDecl *an
   return result;
 }
 
+XIL_Type Translator::TranslateFunctionType(QualType type, const FunctionDecl *annotated)
+{
+  if (const CXXMethodDecl *md = dyn_cast_or_null<CXXMethodDecl>(annotated))
+    return TranslateMethodType(md, true);
+  return MakeFunctionType(*this, type, annotated, nullptr);
+}
+
+XIL_Type Translator::TranslateMethodType(const CXXMethodDecl *md, bool annotated)
+{
+  // Translating the class (rather than just naming it) generates its CSU, as
+  // gcc's translation of method types does.
+  std::string csu;
+  if (md->isInstance())
+    csu = XIL_GetTypeCSUName(TranslateRecordType(md->getParent()));
+  return MakeFunctionType(*this, md->getType(), annotated ? md : nullptr,
+                          csu.empty() ? nullptr : csu.c_str());
+}
+
 /////////////////////////////////////////////////////////////////////
 // CSUs
 /////////////////////////////////////////////////////////////////////
 
 // Anonymous types are structs/unions without a name of their own, possibly
-// behind a pointer or array, as with XIL_IsAnonymous in gcc/type.c.
-static const RecordDecl *AnonymousRecord(QualType type)
+// behind a pointer or array, as with XIL_IsAnonymous in gcc/type.c. gcc also
+// treats pointers to member functions as anonymous structs.
+static QualType StripPointerAndArrays(QualType type)
 {
   QualType canon = type.getCanonicalType();
   if (canon->isPointerType())
     canon = canon->getPointeeType().getCanonicalType();
   while (const ArrayType *at = canon->getAsArrayTypeUnsafe())
     canon = at->getElementType().getCanonicalType();
+  return canon;
+}
 
-  const RecordDecl *rd = canon->getAsRecordDecl();
+static const RecordDecl *AnonymousRecord(QualType type)
+{
+  const RecordDecl *rd = StripPointerAndArrays(type)->getAsRecordDecl();
   if (!rd)
     return nullptr;
   if (rd->getIdentifier() || rd->getTypedefNameForAnonDecl())
+    return nullptr;
+  // Lambda closure types are named by their location, not by their first
+  // use, which depends on the order things are translated in.
+  if (const CXXRecordDecl *crd = dyn_cast<CXXRecordDecl>(rd))
+    if (crd->isLambda())
+      return nullptr;
+  // Anonymous types inside template instantiations are named by gcc's type
+  // printer, eg Foo<int>::<unnamed union>.
+  if (IsTemplateInstantiation(rd))
     return nullptr;
   return rd;
 }
 
 bool Translator::IsAnonymousType(QualType type)
 {
-  return AnonymousRecord(type) != nullptr;
+  return AnonymousRecord(type) != nullptr ||
+    StripPointerAndArrays(type)->isMemberFunctionPointerType();
 }
 
 void Translator::NameAnonymousType(QualType type, const std::string &name)
@@ -229,6 +268,10 @@ void Translator::NameAnonymousType(QualType type, const std::string &name)
   // The first use of an anonymous type determines its name.
   if (const RecordDecl *rd = AnonymousRecord(type))
     RecordNames.try_emplace(cast<RecordDecl>(rd->getCanonicalDecl()), name);
+
+  QualType stripped = StripPointerAndArrays(type);
+  if (stripped->isMemberFunctionPointerType())
+    MemberPointerNames.try_emplace(stripped.getTypePtr(), name);
 }
 
 std::string Translator::RecordName(const RecordDecl *rd)
@@ -240,7 +283,33 @@ std::string Translator::RecordName(const RecordDecl *rd)
     return iter->second;
 
   std::string name;
-  if (const IdentifierInfo *id = rd->getIdentifier())
+  if (Ctx.getLangOpts().CPlusPlus) {
+    name = CxxRecordName(rd);
+    if (name.empty()) {
+      // An anonymous type that we haven't seen a use of yet, or a lambda.
+      // These are named by their location, as with the gcc plugin. Lambdas in
+      // functions are prefixed with the function's name instead of the file's,
+      // as each instantiation of a template has its own closure types.
+      const CXXRecordDecl *crd = dyn_cast<CXXRecordDecl>(rd);
+      bool lambda = crd && crd->isLambda();
+      PresumedLoc ploc = SM.getPresumedLoc(SM.getExpansionLoc(rd->getLocation()));
+      const FunctionDecl *function = lambda ?
+        dyn_cast_or_null<FunctionDecl>(rd->getParentFunctionOrMethod()) : nullptr;
+      std::string prefix;
+      if (!function)
+        prefix = FileBasename(rd->getLocation());
+      else if (isLambdaCallOperator(function))
+        // Lambdas within lambdas are named after the enclosing closure type,
+        // as gcc and clang mangle lambda functions differently.
+        prefix = RecordName(cast<CXXMethodDecl>(function)->getParent());
+      else
+        prefix = FunctionName(function);
+      name = prefix +
+        (lambda ? ":<lambda:" : ":<unnamed:") +
+        std::to_string(ploc.isValid() ? ploc.getLine() : 0) + ">";
+    }
+  }
+  else if (const IdentifierInfo *id = rd->getIdentifier())
     name = id->getName().str();
   else if (const TypedefNameDecl *td = rd->getTypedefNameForAnonDecl())
     name = td->getName().str();
@@ -253,6 +322,95 @@ std::string Translator::RecordName(const RecordDecl *rd)
   return name;
 }
 
+const Translator::Layout &Translator::GetLayout(const RecordDecl *rd)
+{
+  const RecordDecl *def = rd->getDefinition();
+  if (!def)
+    def = rd;
+
+  auto iter = Layouts.find(def);
+  if (iter != Layouts.end())
+    return iter->second;
+
+  Layout layout;
+  int index = 0;
+
+  const CXXRecordDecl *crd = dyn_cast<CXXRecordDecl>(def);
+  const ASTRecordLayout *al =
+    def->isCompleteDefinition() && !def->isInvalidDecl() ? &Ctx.getASTRecordLayout(def) : nullptr;
+
+  if (crd && al) {
+    // The class's own vtable pointer is the first field, but isn't emitted.
+    if (al->hasOwnVFPtr())
+      index++;
+
+    // The primary base comes first, followed by the other bases.
+    const CXXRecordDecl *primary = al->isPrimaryBaseVirtual() ? nullptr : al->getPrimaryBase();
+    if (primary) {
+      LayoutEntry entry;
+      entry.base = primary;
+      entry.index = index++;
+      entry.offset = 0;
+      layout.entries.push_back(entry);
+    }
+    for (const CXXBaseSpecifier &spec : crd->bases()) {
+      if (spec.isVirtual())
+        continue;
+      const CXXRecordDecl *base = spec.getType()->getAsCXXRecordDecl();
+      if (!base || base == primary)
+        continue;
+      LayoutEntry entry;
+      entry.base = base;
+      entry.index = index++;
+      entry.offset = (int) al->getBaseClassOffset(base).getQuantity();
+      layout.entries.push_back(entry);
+    }
+  }
+
+  for (const FieldDecl *fd : def->fields()) {
+    LayoutEntry entry;
+    entry.field = fd;
+    entry.index = index++;
+    if (al)
+      entry.offset = (int) (al->getFieldOffset(fd->getFieldIndex()) / 8);
+    layout.entries.push_back(entry);
+  }
+
+  // Virtual bases (direct or indirect) come last.
+  if (crd && al) {
+    for (const CXXBaseSpecifier &spec : crd->vbases()) {
+      const CXXRecordDecl *base = spec.getType()->getAsCXXRecordDecl();
+      if (!base)
+        continue;
+      LayoutEntry entry;
+      entry.base = base;
+      entry.index = index++;
+      entry.offset = (int) al->getVBaseClassOffset(base).getQuantity();
+      layout.entries.push_back(entry);
+    }
+  }
+
+  return Layouts[def] = std::move(layout);
+}
+
+int Translator::FieldIndex(const FieldDecl *fd)
+{
+  for (const LayoutEntry &entry : GetLayout(fd->getParent()).entries) {
+    if (entry.field == fd)
+      return entry.index;
+  }
+  return (int) fd->getFieldIndex();
+}
+
+XIL_Field Translator::BaseField(const RecordDecl *rd, const LayoutEntry &entry)
+{
+  std::string name = "field:" + std::to_string(entry.index);
+  std::string csu = RecordName(rd);
+  XIL_Type type = TranslateRecordType(entry.base);
+  return XIL_MakeField(name.c_str(), name.c_str(), csu.c_str(), type, 0,
+                       XIL_MakeAnnotationList());
+}
+
 XIL_Type Translator::TranslateRecordType(const RecordDecl *rd)
 {
   std::string name = RecordName(rd);
@@ -260,8 +418,8 @@ XIL_Type Translator::TranslateRecordType(const RecordDecl *rd)
   // Generate the CSU the first time we see it, if it is complete.
   const RecordDecl *def = rd->getDefinition();
   int generate = 0;
-  XIL_Type csuType =
-    XIL_TypeCSU(name.c_str(), (def && !def->isInvalidDecl()) ? &generate : nullptr);
+  bool complete = def && !def->isInvalidDecl() && !def->isDependentType();
+  XIL_Type csuType = XIL_TypeCSU(name.c_str(), complete ? &generate : nullptr);
   if (!generate)
     return csuType;
 
@@ -277,12 +435,23 @@ XIL_Type Translator::TranslateRecordType(const RecordDecl *rd)
   const ASTRecordLayout &layout = Ctx.getASTRecordLayout(def);
   XIL_CSUSetWidth((int) layout.getSize().getQuantity());
 
-  for (const FieldDecl *fd : def->fields()) {
-    if (fd->isUnnamedBitField())
-      continue;
-    XIL_Field field = TranslateField(fd);
-    int offset = (int) (layout.getFieldOffset(fd->getFieldIndex()) / 8);
-    XIL_CSUAddDataField(field, offset);
+  for (const LayoutEntry &entry : GetLayout(def).entries) {
+    if (entry.base) {
+      XIL_CSUAddDataField(BaseField(def, entry), entry.offset);
+    }
+    else if (!entry.field->isUnnamedBitField()) {
+      XIL_CSUAddDataField(TranslateField(entry.field), entry.offset);
+    }
+  }
+
+  if (const CXXRecordDecl *crd = dyn_cast<CXXRecordDecl>(def)) {
+    for (const CXXBaseSpecifier &spec : crd->bases()) {
+      if (const CXXRecordDecl *base = spec.getType()->getAsCXXRecordDecl()) {
+        std::string baseName = RecordName(base);
+        XIL_CSUAddBase(baseName.c_str());
+      }
+    }
+    AddCxxMembers(crd);
   }
 
   for (const AnnotateAttr *attr : def->specific_attrs<AnnotateAttr>()) {
@@ -294,18 +463,41 @@ XIL_Type Translator::TranslateRecordType(const RecordDecl *rd)
   return csuType;
 }
 
+// The name gcc gives the field of a lambda closure: __var for a captured
+// variable, or __this.
+std::string Translator::LambdaCaptureName(const FieldDecl *fd)
+{
+  const CXXRecordDecl *rd = dyn_cast<CXXRecordDecl>(fd->getParent());
+  if (!rd || !rd->isLambda())
+    return "";
+
+  llvm::DenseMap<const ValueDecl*, FieldDecl*> captures;
+  FieldDecl *thisField = nullptr;
+  rd->getCaptureFields(captures, thisField);
+  if (fd == thisField)
+    return "__this";
+  for (const auto &entry : captures) {
+    if (entry.second == fd)
+      return "__" + entry.first->getName().str();
+  }
+  return "";
+}
+
 XIL_Field Translator::TranslateField(const FieldDecl *fd)
 {
   const RecordDecl *parent = fd->getParent();
   std::string csuName = RecordName(parent);
 
   // Unnamed fields (anonymous struct/union members) are named by their index,
-  // as with gcc.
+  // as with gcc. The fields of lambda closures are named after the captured
+  // variables, as gcc does.
   std::string name;
   if (fd->getIdentifier())
     name = fd->getName().str();
+  else if (std::string capture = LambdaCaptureName(fd); !capture.empty())
+    name = capture;
   else
-    name = "field:" + std::to_string(fd->getFieldIndex());
+    name = "field:" + std::to_string(FieldIndex(fd));
 
   // Anonymous field types are named after the field.
   NameAnonymousType(fd->getType(), csuName + ":" + name);
@@ -328,6 +520,153 @@ XIL_Field Translator::TranslateField(const FieldDecl *fd)
                                   type, 0, annotations);
   XIL_ReleaseAnnotationList(annotations);
   return field;
+}
+
+/////////////////////////////////////////////////////////////////////
+// Virtual functions
+/////////////////////////////////////////////////////////////////////
+
+const std::vector<Translator::VirtualFunction> &
+Translator::GetVirtualFunctions(const CXXRecordDecl *rd)
+{
+  rd = rd->getDefinition();
+  auto iter = VirtualFunctions.find(rd);
+  if (iter != VirtualFunctions.end())
+    return iter->second;
+
+  std::vector<VirtualFunction> list;
+
+  // Functions inherited from each base, updated with any overrides in this
+  // class. These are the functions from all base subobjects that are fields
+  // of this class (direct bases and virtual bases).
+  for (const LayoutEntry &entry : GetLayout(rd).entries) {
+    if (!entry.base || !entry.base->hasDefinition())
+      continue;
+    XIL_Field baseField = BaseField(rd, entry);
+    std::vector<VirtualFunction> baseList = GetVirtualFunctions(entry.base);
+    for (const VirtualFunction &baseFunction : baseList) {
+      VirtualFunction function = baseFunction;
+      function.base = baseField;
+
+      const CXXMethodDecl *override = nullptr;
+      if (isa<CXXDestructorDecl>(baseFunction.decl))
+        override = rd->getDestructor();
+      else
+        override = baseFunction.decl->getCorrespondingMethodDeclaredInClass(rd);
+      if (override && override->getCanonicalDecl() != baseFunction.decl->getCanonicalDecl()) {
+        override = override->getCanonicalDecl();
+        function.decl = override;
+        function.fieldMethod = override;
+      }
+      list.push_back(function);
+    }
+  }
+
+  // Virtual functions declared in this class that don't override anything.
+  for (const CXXMethodDecl *md : rd->methods()) {
+    if (!md->isVirtual())
+      continue;
+    bool overrides = false;
+    for (const VirtualFunction &function : list)
+      overrides |= (function.decl->getCanonicalDecl() == md->getCanonicalDecl());
+    if (overrides)
+      continue;
+
+    if (isa<CXXDestructorDecl>(md)) {
+      list.push_back({md, md, Dtor_Complete, nullptr});
+      list.push_back({md, md, Dtor_Deleting, nullptr});
+    }
+    else {
+      list.push_back({md, md, Dtor_Complete, nullptr});
+    }
+  }
+
+  return VirtualFunctions[rd] = std::move(list);
+}
+
+XIL_Field Translator::MethodField(const CXXMethodDecl *md, CXXDtorType dtorKind)
+{
+  std::string csu = RecordName(md->getParent());
+  std::string name;
+  XIL_Type type;
+
+  if (isa<CXXDestructorDecl>(md)) {
+    // gcc's names for the virtual destructor variants.
+    name = (dtorKind == Dtor_Deleting) ? "__dt_del " : "__dt_comp ";
+    type = XIL_TypeFunction(XIL_TypeVoid(), csu.c_str(), 0, nullptr, nullptr, 0,
+                            XIL_MakeAnnotationList());
+  }
+  else {
+    name = md->getNameAsString();
+    type = TranslateMethodType(md);
+  }
+
+  XIL_AnnotationList annotations = DeclAnnotations(md);
+  XIL_Field field = XIL_MakeField(name.c_str(), name.c_str(), csu.c_str(),
+                                  type, 1, annotations);
+  XIL_ReleaseAnnotationList(annotations);
+  return field;
+}
+
+void Translator::AddCxxMembers(const CXXRecordDecl *rd)
+{
+  for (const VirtualFunction &function : GetVirtualFunctions(rd)) {
+    XIL_Field field = MethodField(function.fieldMethod, function.dtorKind);
+
+    XIL_Var var = nullptr;
+    if (!function.decl->isPureVirtual()) {
+      std::string name;
+      if (const CXXDestructorDecl *dtor = dyn_cast<CXXDestructorDecl>(function.decl))
+        name = FunctionName(GlobalDecl(dtor, function.dtorKind));
+      else
+        name = FunctionName(function.decl);
+      std::string source = SourceName(function.decl);
+      var = XIL_VarFunc(name.c_str(), source.c_str());
+    }
+
+    XIL_CSUAddFunctionField(field, function.base, var);
+  }
+}
+
+XIL_Type Translator::TranslateMemberFunctionPointer(QualType type)
+{
+  QualType canon = type.getCanonicalType();
+
+  std::string name = "__ptr_member";
+  auto iter = MemberPointerNames.find(canon.getTypePtr());
+  if (iter != MemberPointerNames.end())
+    name = iter->second;
+
+  int generate = 0;
+  XIL_Type csuType = XIL_TypeCSU(name.c_str(), &generate);
+  if (!generate)
+    return csuType;
+
+  // The structure gcc uses for pointers to member functions: a pointer to the
+  // function, and an adjustment for the this pointer.
+  const MemberPointerType *mpt = canon->castAs<MemberPointerType>();
+  std::string classCSU =
+    XIL_GetTypeCSUName(TranslateRecordType(mpt->getMostRecentCXXRecordDecl()));
+  XIL_Type funcType = MakeFunctionType(*this, mpt->getPointeeType(), nullptr,
+                                       classCSU.c_str());
+  XIL_Type pfnType = XIL_TypePointer(funcType, PointerWidth, PTR_POINTER);
+  XIL_Type deltaType = XIL_TypeInt(PointerWidth, 1, VARIANT_NONE);
+
+  XIL_PushActiveCSU(name.c_str());
+  XIL_CSUSetKind(XIL_CSU_Struct);
+  XIL_CSUSetCommand(Options.command.c_str());
+  XIL_Location empty = XIL_MakeLocation("<empty>", 0);
+  XIL_CSUSetBeginLocation(empty);
+  XIL_CSUSetEndLocation(empty);
+  XIL_CSUSetWidth(2 * PointerWidth);
+
+  XIL_AnnotationList none = XIL_MakeAnnotationList();
+  XIL_CSUAddDataField(XIL_MakeField("__pfn", "__pfn", name.c_str(), pfnType, 0, none), 0);
+  XIL_CSUAddDataField(XIL_MakeField("__delta", "__delta", name.c_str(), deltaType, 0, none),
+                      PointerWidth);
+
+  XIL_PopActiveCSU(0);
+  return csuType;
 }
 
 } // namespace xgill

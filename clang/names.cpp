@@ -54,17 +54,21 @@ static std::string MangledName(MangleContext &mangler, GlobalDecl gd)
 
 std::string Translator::FunctionName(const FunctionDecl *fd)
 {
-  fd = fd->getCanonicalDecl();
+  // Constructors and destructors are named by their complete object
+  // variants by default.
+  if (const CXXConstructorDecl *ctor = dyn_cast<CXXConstructorDecl>(fd))
+    return FunctionName(GlobalDecl(ctor, Ctor_Complete));
+  if (const CXXDestructorDecl *dtor = dyn_cast<CXXDestructorDecl>(fd))
+    return FunctionName(GlobalDecl(dtor, Dtor_Complete));
+  return FunctionName(GlobalDecl(fd));
+}
+
+std::string Translator::FunctionName(GlobalDecl gd)
+{
+  const FunctionDecl *fd = cast<FunctionDecl>(gd.getDecl());
 
   if (UseMangledName(Ctx, *Mangler, fd)) {
-    GlobalDecl gd;
-    if (const CXXConstructorDecl *ctor = dyn_cast<CXXConstructorDecl>(fd))
-      gd = GlobalDecl(ctor, Ctor_Complete);
-    else if (const CXXDestructorDecl *dtor = dyn_cast<CXXDestructorDecl>(fd))
-      gd = GlobalDecl(dtor, Dtor_Complete);
-    else
-      gd = GlobalDecl(fd);
-    std::string name = MangledName(*Mangler, gd);
+    std::string name = MangledName(*Mangler, gd.getCanonicalDecl());
     if (!fd->isExternallyVisible())
       return FileBasename(fd->getLocation()) + ":" + name;
     return name;
@@ -72,8 +76,12 @@ std::string Translator::FunctionName(const FunctionDecl *fd)
 
   std::string name = SourceName(fd);
 
+  // In C++, main is not mangled and not prefixed, as with gcc.
+  if (Ctx.getLangOpts().CPlusPlus && fd->isMain())
+    return name;
+
   // Static functions are prefixed with the name of the file they are in. As a
-  // special case, main() is always file-prefixed.
+  // special case, main() is always file-prefixed in C.
   if (!fd->isExternallyVisible() || fd->isMain())
     return FileBasename(fd->getLocation()) + ":" + name;
   return name;
