@@ -90,7 +90,7 @@ for arg in list(tests):
         frontend = arg.split("=", 1)[1]
         tests.remove(arg)
 if not tests:
-    tests = ['gchazard', 'gccbugs', 'memory']
+    tests = ['gchazard', 'gccbugs', 'memory', 'cxx']
 
 # clang errors out on some old-style C that gcc only warns about.
 CLANG_C_FLAGS = ("-Wno-error=implicit-function-declaration -Wno-error=implicit-int "

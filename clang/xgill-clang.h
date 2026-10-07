@@ -333,6 +333,7 @@ private:
   void TranslateDecl(XIL_PPoint *point, PostEdges *post, const clang::Decl *d,
                      bool destroy = true);
   void TranslateDeclStmt(XIL_PPoint *point, PostEdges *post, const clang::Stmt *s);
+  void TranslateStaticLocal(XIL_PPoint *point, const clang::VarDecl *vd);
   void TranslateForRange(XIL_PPoint *point, const clang::CXXForRangeStmt *s);
   void TranslateInitStmt(XIL_PPoint *point, const clang::Stmt *init);
   void FinishScope(XIL_PPoint *point, Scope &scope);

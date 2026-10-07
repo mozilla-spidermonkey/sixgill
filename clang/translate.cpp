@@ -668,8 +668,49 @@ void BlockTranslator::TranslateExprInner(Env &env, const Expr *e)
     BogusResult(env);
     return;
 
+  case Stmt::CXXStdInitializerListExprClass: {
+    // An initializer list points to a temporary array, with either its length
+    // or its end, as with gcc.
+    const CXXStdInitializerListExpr *ile = cast<CXXStdInitializerListExpr>(e);
+    UpdateLocation(*env.point, e);
+    const Expr *sub = ile->getSubExpr();
+    XIL_Exp array = LValue(sub, env.point);
+    uint64_t length = 0;
+    QualType elementType = Ctx.CharTy;
+    if (const ConstantArrayType *cat = Ctx.getAsConstantArrayType(sub->getType())) {
+      length = cat->getZExtSize();
+      elementType = cat->getElementType();
+    }
+
+    XIL_Exp object = env.assign ? env.assign : XIL_ExpVar(NewTemporary(e->getType()));
+    const RecordDecl *rd = e->getType()->getAsRecordDecl();
+    auto field = rd ? rd->getDefinition()->field_begin() : RecordDecl::field_iterator();
+    if (rd && field != rd->getDefinition()->field_end()) {
+      const FieldDecl *first = *field++;
+      XIL_PPoint after = AddPoint(CurrentLocation());
+      XIL_CFGEdgeAssign(*env.point, after, T.TranslateType(first->getType()),
+                        XIL_ExpFld(object, T.TranslateField(first)), array);
+      *env.point = after;
+      if (field != rd->getDefinition()->field_end()) {
+        const FieldDecl *second = *field;
+        XIL_Exp value = XIL_ExpInt((long) length);
+        if (second->getType()->isPointerType())
+          value = XIL_ExpBinop(XIL_B_PlusPI, array, value, T.TranslateType(elementType), 0, true);
+        after = AddPoint(CurrentLocation());
+        XIL_CFGEdgeAssign(*env.point, after, T.TranslateType(second->getType()),
+                          XIL_ExpFld(object, T.TranslateField(second)), value);
+        *env.point = after;
+      }
+    }
+
+    if (env.assign)
+      env.processed = true;
+    else
+      ProcessResult(env, XIL_ExpDrf(object));
+    return;
+  }
+
   case Stmt::CXXParenListInitExprClass:
-  case Stmt::CXXStdInitializerListExprClass:
   case Stmt::CXXTypeidExprClass:
   case Stmt::CXXPseudoDestructorExprClass:
     BogusResult(env);
@@ -2714,6 +2755,59 @@ void BlockTranslator::TranslateCompound(XIL_PPoint *point, const CompoundStmt *s
   PopScope();
 }
 
+// Initialize a static local if its guard variable says it hasn't been
+// initialized yet, and register its destructor to run at exit. The calls that
+// lock the guard variable are left out.
+void BlockTranslator::TranslateStaticLocal(XIL_PPoint *point, const VarDecl *vd)
+{
+  const Expr *init = vd->getInit();
+  bool dynamic = init && !vd->hasConstantInitialization();
+  bool destroy = vd->needsDestruction(Ctx) == QualType::DK_cxx_destructor;
+  if ((!dynamic && !destroy) || !*point)
+    return;
+
+  XIL_Location loc = CurrentLocation();
+  std::string guardName;
+  {
+    llvm::raw_string_ostream out(guardName);
+    T.Mangler->mangleStaticGuardVariable(vd, out);
+  }
+  XIL_Var guard = XIL_VarGlob(guardName.c_str(), guardName.c_str());
+  XIL_Exp test = XIL_ExpBinop(XIL_B_Equal, XIL_ExpDrf(XIL_ExpVar(guard)), XIL_ExpInt(0),
+                              nullptr, 0, true);
+
+  XIL_PPoint initPoint = AddPoint(loc);
+  XIL_PPoint afterPoint = AddPoint(loc);
+  XIL_CFGEdgeAssume(*point, initPoint, test, 1);
+  XIL_CFGEdgeAssume(*point, afterPoint, test, 0);
+
+  XIL_Exp var = XIL_ExpVar(T.GlobalVar(vd));
+  QualType type = vd->getType();
+  if (dynamic)
+    InitializeObject(&initPoint, nullptr, var, type, init);
+
+  if (destroy) {
+    XIL_Exp object = FirstElement(var, &type);
+    const CXXRecordDecl *rd = type->getAsCXXRecordDecl();
+    if (const CXXDestructorDecl *dtor = rd ? rd->getDestructor() : nullptr) {
+      XIL_Type voidPtr = XIL_TypePointer(XIL_TypeVoid(), T.PointerWidth, PTR_POINTER);
+      XIL_Type argTypes[3] = { voidPtr, voidPtr, voidPtr };
+      XIL_Type atexitType = XIL_TypeFunction(T.TranslateType(Ctx.IntTy), nullptr, 0,
+                                             argTypes, nullptr, 3, XIL_MakeAnnotationList());
+      std::vector<XIL_Exp> args = {
+        XIL_ExpVar(T.FunctionVar(GlobalDecl(dtor, Dtor_Complete))),
+        object,
+        XIL_ExpVar(XIL_VarGlob("__dso_handle", "__dso_handle")),
+      };
+      XIL_Exp function = XIL_ExpVar(XIL_VarFunc("__cxa_atexit", "__cxa_atexit"));
+      AddCall(&initPoint, atexitType, nullptr, nullptr, function, args);
+    }
+  }
+
+  XIL_CFGEdgeSkip(initPoint, afterPoint);
+  *point = afterPoint;
+}
+
 void BlockTranslator::TranslateDeclStmt(XIL_PPoint *point, PostEdges *post, const Stmt *s)
 {
   for (const clang::Decl *d : cast<DeclStmt>(s)->decls())
@@ -2729,7 +2823,12 @@ void BlockTranslator::TranslateDecl(XIL_PPoint *point, PostEdges *post,
 
   XIL_Location loc = UpdateLocation(*point, vd->getLocation());
 
-  // Static locals and extern declarations are globals, with their
+  // Static locals with dynamic initialization or destructors are initialized
+  // the first time their declaration is reached.
+  if (vd->isStaticLocal() && Ctx.getLangOpts().CPlusPlus)
+    TranslateStaticLocal(point, vd);
+
+  // Static locals and extern declarations are globals, with any constant
   // initializers handled separately.
   if (vd->hasGlobalStorage() || vd->hasExternalStorage())
     return;
@@ -3302,7 +3401,14 @@ void BlockTranslator::GenerateGlobal(const VarDecl *vd, XIL_Var var)
   XIL_CFGAddVar(var, type, 1);
 
   XIL_PPoint point = EntryPoint;
-  if (const Expr *init = vd->getInit()) {
+
+  // Static locals with dynamic initialization are initialized in their
+  // function.
+  const Expr *init = vd->getInit();
+  if (vd->isStaticLocal() && Ctx.getLangOpts().CPlusPlus && !vd->hasConstantInitialization())
+    init = nullptr;
+
+  if (init) {
     Env env(&point);
     env.assign = XIL_ExpVar(var);
     env.assignType = type;
