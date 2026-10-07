@@ -2,7 +2,8 @@
 # gcc front end represents several of these constructs differently (see
 # local/clang-port-output-differences.md).
 
-compile("source.cpp")
+# Gecko builds with -fno-exceptions, so exception paths are not modeled.
+compile("source.cpp", options="-fno-exceptions")
 
 
 def body(name):

@@ -324,7 +324,7 @@ private:
   ScopeChain CurrentChain();
   void TranslateCtorInitializers(XIL_PPoint *point, const clang::CXXConstructorDecl *ctor,
                                  clang::CXXCtorType kind);
-  void TranslateDestructorEpilogue(XIL_PPoint *point, const clang::CXXDestructorDecl *dtor);
+  void DestroySubobjects(XIL_PPoint *point, const clang::CXXRecordDecl *rd);
   void ForwardToVariant(XIL_PPoint *point, clang::GlobalDecl target);
 
   // Statements.

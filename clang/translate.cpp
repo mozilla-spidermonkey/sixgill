@@ -1708,6 +1708,27 @@ void BlockTranslator::TranslateMemberCall(Env &env, const CallExpr *e,
 {
   XIL_Location loc = UpdateLocation(*env.point, e);
 
+  // Trivial copy and move assignments are assignments of the whole object.
+  if (md->isTrivial() && args.size() == 1 &&
+      (md->isCopyAssignmentOperator() || md->isMoveAssignmentOperator())) {
+    XIL_Exp target = isArrow
+      ? RValue(object, env.point)
+      : LValue(object, env.point);
+
+    // Assign a temporary's initializer directly, rather than going through
+    // the temporary.
+    const Expr *value = args[0]->IgnoreParenNoopCasts(Ctx);
+    if (const MaterializeTemporaryExpr *mte = dyn_cast<MaterializeTemporaryExpr>(value))
+      value = mte->getSubExpr();
+
+    Env valueEnv(env.point);
+    valueEnv.assign = target;
+    valueEnv.assignType = T.TranslateType(Ctx.getCanonicalTagType(md->getParent()));
+    TranslateExpr(valueEnv, value);
+    ProcessResult(env, XIL_ExpDrf(target));
+    return;
+  }
+
   CallResult result = PrepareCallResult(env, e);
 
   // The object to call the method on, which is an lvalue (the address of the
@@ -2344,12 +2365,11 @@ void BlockTranslator::TranslateCtorInitializers(XIL_PPoint *point,
   }
 }
 
-// Destroy the members and bases of an object at the end of a base object
-// destructor, in reverse order of construction.
-void BlockTranslator::TranslateDestructorEpilogue(XIL_PPoint *point,
-                                                  const CXXDestructorDecl *dtor)
+// Destroy the members and non-virtual bases of an object, in reverse order of
+// construction: at the end of a base object destructor, or when a constructor
+// throws.
+void BlockTranslator::DestroySubobjects(XIL_PPoint *point, const CXXRecordDecl *rd)
 {
-  const CXXRecordDecl *rd = dtor->getParent();
   XIL_Exp object = ThisValue();
 
   if (!rd->isUnion()) {
@@ -3363,11 +3383,26 @@ void BlockTranslator::GenerateFunction(GlobalDecl gd)
 
     TranslateStmt(&point, fd->getBody());
 
+    // When exceptions are enabled, the constructor body might throw, which
+    // destroys the members and bases that have been constructed. Gecko builds
+    // with -fno-exceptions, so other exception paths are not modeled.
+    if (ctor && Ctx.getLangOpts().CXXExceptions && point) {
+      XIL_Location loc = XIL_CFGGetPointLocation(point);
+      XIL_Exp thrown = XIL_ExpDrf(XIL_ExpVar(NewTemporary(Ctx.BoolTy)));
+      XIL_PPoint throwPoint = AddPoint(loc);
+      XIL_PPoint returnPoint = AddPoint(loc);
+      XIL_CFGEdgeAssume(point, throwPoint, thrown, 1);
+      XIL_CFGEdgeAssume(point, returnPoint, thrown, 0);
+      DestroySubobjects(&throwPoint, ctor->getParent());
+      XIL_CFGEdgeSkip(throwPoint, ExitPoint);
+      point = returnPoint;
+    }
+
     if (dtor) {
       XIL_CFGEdgeSkip(point, ReturnPoint);
       point = ReturnPoint;
       UpdateLocation(point, fd->getBody()->getEndLoc());
-      TranslateDestructorEpilogue(&point, dtor);
+      DestroySubobjects(&point, dtor->getParent());
     }
   }
 

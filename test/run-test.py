@@ -108,7 +108,7 @@ for name in tests:
     else:
         os.mkdir(outdir)
 
-    def compile(source, env_mods={}):
+    def compile(source, env_mods={}, options=""):
         if frontend == "clang":
             clang_bin = os.path.join(config["CLANG_DIR"], "bin")
             if source.endswith(".c"):
@@ -123,10 +123,11 @@ for name in tests:
             compile = os.environ.get("CXX", f"{config['TARGET_CC']} -x c++")
             compile += " -std=c++17"
             sixgill = plugin
-        cmd = "{compile} -c {source} -fplugin={sixgill}".format(
+        cmd = "{compile} -c {source} -fplugin={sixgill} {options}".format(
             source=os.path.join(indir, source),
             compile=compile,
-            sixgill=sixgill
+            sixgill=sixgill,
+            options=options
         )
         print("Running %s" % cmd)
         os.environ['CCACHE_DISABLE'] = '1'
